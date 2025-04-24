@@ -167,3 +167,71 @@ input, button {
 #modal input {
     margin-left: 70px;
 }
+
+/* Styles for task list navigation */
+#list_navigation {
+    display: inline-block; /* Keep it on the same line */
+    margin-left: 15px; /* Add some space from the random button */
+    vertical-align: middle; /* Align vertically with other controls */
+}
+
+#list_navigation button {
+    margin-left: 5px; /* Space between buttons and text */
+    margin-right: 5px;
+    padding: 2px 8px; /* Smaller padding */
+}
+
+#list_navigation span {
+    margin-left: 5px;
+    margin-right: 5px;
+    font-size: 0.9em; /* Slightly smaller text */
+}
+
+/* Comment Section Styles */
+#comment_section {
+    border-top: 2px solid #bbb; /* Separator line */
+    margin-top: 20px;
+    padding-top: 15px;
+}
+
+#comment_section h4 {
+    margin-top: 0;
+    margin-bottom: 10px;
+    color: #333;
+}
+
+#comment_display_area {
+    background-color: #fff;
+    border: 1px solid #ccc;
+    padding: 10px;
+    min-height: 50px;
+    margin-bottom: 10px;
+    white-space: pre-wrap; /* Preserve whitespace and wrap text */
+    word-wrap: break-word;
+    font-size: 0.95em;
+    line-height: 1.4;
+}
+
+#comment_controls button, #add_comment_area button {
+    padding: 3px 8px;
+    font-size: 0.9em;
+    cursor: pointer;
+}
+
+#comment_controls button:disabled {
+    cursor: not-allowed;
+    opacity: 0.6;
+}
+
+#comment_nav_display, #comment_score_display {
+    font-weight: bold;
+}
+
+#add_comment_area textarea {
+    display: block;
+    width: calc(100% - 12px); /* Account for padding */
+    margin-bottom: 5px;
+    border: 1px solid #ccc;
+    padding: 5px;
+    font-family: inherit; /* Use the same font as the body */
+}

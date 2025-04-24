@@ -1,10 +1,16 @@
-
 // Internal state.
 var CURRENT_INPUT_GRID = new Grid(3, 3);
 var CURRENT_OUTPUT_GRID = new Grid(3, 3);
-var TEST_PAIRS = new Array();
+var TEST_PAIRS = new Array(); // Test pairs for the *currently loaded* task
 var CURRENT_TEST_PAIR_INDEX = 0;
 var COPY_PASTE_DATA = new Array();
+var LOADED_TASK_LIST = []; // Holds the list of tasks from the loaded dataset
+var CURRENT_TASK_INDEX = -1; // Index in LOADED_TASK_LIST
+var CURRENT_DATASET_NAME = null; // 'original' or 'augmented'
+var TASK_ID_MAP = {}; // Map task IDs to their index in LOADED_TASK_LIST
+var CURRENT_TRACE_INDEX = 0; // Index of the currently viewed trace for the active task
+var USERNAME = "Anonymous"; // Default username, will be updated from input
+var socket = null; // WebSocket connection object
 
 // Cosmetic.
 var EDITION_GRID_HEIGHT = 500;
@@ -12,12 +18,38 @@ var EDITION_GRID_WIDTH = 500;
 var MAX_CELL_SIZE = 100;
 
 
-function resetTask() {
+function resetTask(isListNavigation = false) {
+    // Reset grids and current test pair index for the new task
     CURRENT_INPUT_GRID = new Grid(3, 3);
     TEST_PAIRS = new Array();
     CURRENT_TEST_PAIR_INDEX = 0;
-    $('#task_preview').html('');
-    resetOutputGrid();
+    $('#task_preview').html(''); // Clear old demonstration pairs
+    resetOutputGrid(); // Reset the output grid editor
+
+    // Only fully reset list/dataset state if not just navigating within the list
+    if (!isListNavigation) {
+        LOADED_TASK_LIST = [];
+        CURRENT_TASK_INDEX = -1;
+        TASK_ID_MAP = {};
+        CURRENT_DATASET_NAME = null; // Clear dataset name unless reloading same one
+        $('#list_navigation').hide();
+        $('#task_index_display').text('');
+        $('#loaded_dataset_display').text('');
+        $('#goto_id_controls').hide();
+        $('#comment_section').hide(); // Hide trace section on full reset
+        CURRENT_TRACE_INDEX = 0; // Reset trace index
+    }
+
+    $('#error_display').hide();
+    $('#info_display').hide();
+    // Also reset trace display area on task reset
+    $('#comment_display_area').text('No reasoning traces added yet.');
+    $('#comment_score_display').text('0');
+    $('#comment_nav_display').text('Trace -/-');
+    $('#prev_comment_btn').prop('disabled', true);
+    $('#next_comment_btn').prop('disabled', true);
+    $('#upvote_btn').prop('disabled', true);
+    $('#downvote_btn').prop('disabled', true);
 }
 
 function refreshEditionGrid(jqGrid, dataGrid) {
@@ -111,12 +143,31 @@ function fillPairPreview(pairId, inputGrid, outputGrid) {
     fitCellsToContainer(jqOutputGrid, outputGrid.height, outputGrid.width, 200, 200);
 }
 
-function loadJSONTask(train, test) {
-    resetTask();
+// Loads a single task object into the UI
+function loadSingleTask(taskObject, taskName) {
+    // Reset UI elements specific to a single task load
+    resetTask(CURRENT_TASK_INDEX !== -1); // Pass true if navigating a list
     $('#modal_bg').hide();
-    $('#error_display').hide();
-    $('#info_display').hide();
 
+    try {
+        train = taskObject['train'];
+        test = taskObject['test'];
+        if (!train || !test) {
+            throw new Error("Task object missing 'train' or 'test' fields.");
+        }
+    } catch (e) {
+        errorMsg(`Error processing task ${taskName}: ${e.message}`);
+        // If loading the first task from a list fails, clear the list state
+        if (CURRENT_TASK_INDEX === 0) {
+            LOADED_TASK_LIST = [];
+            CURRENT_TASK_INDEX = -1;
+            $('#list_navigation').hide();
+        }
+        return; // Stop loading this task
+    }
+
+
+    // Load training pairs
     for (var i = 0; i < train.length; i++) {
         pair = train[i];
         values = pair['input'];
@@ -129,80 +180,439 @@ function loadJSONTask(train, test) {
         pair = test[i];
         TEST_PAIRS.push(pair);
     }
-    values = TEST_PAIRS[0]['input'];
-    CURRENT_INPUT_GRID = convertSerializedGridToGridObject(values)
-    fillTestInput(CURRENT_INPUT_GRID);
-    CURRENT_TEST_PAIR_INDEX = 0;
-    $('#current_test_input_id_display').html('1');
+    // Handle cases where there might be no test pairs
+    if (TEST_PAIRS.length > 0 && TEST_PAIRS[0]['input']) {
+        values = TEST_PAIRS[0]['input'];
+        CURRENT_INPUT_GRID = convertSerializedGridToGridObject(values);
+        fillTestInput(CURRENT_INPUT_GRID);
+        CURRENT_TEST_PAIR_INDEX = 0;
+        $('#current_test_input_id_display').html('1');
+    } else {
+        // No test pairs or invalid first test pair
+        $('#evaluation_input').html(''); // Clear input grid display
+        CURRENT_INPUT_GRID = new Grid(3, 3); // Reset grid
+        CURRENT_TEST_PAIR_INDEX = -1; // Indicate no valid test index
+         $('#current_test_input_id_display').html('0');
+    }
     $('#total_test_input_count_display').html(test.length);
+
+
+    // Update task name display using the task's ID if available
+    display_task_name(taskObject.id || taskName); // Prefer task ID for display name
+
+    // Update list navigation UI
+    updateListNavigationUI();
+
+    // Request traces from server for this task
+    const taskId = taskObject.id;
+    if (socket && socket.connected && taskId) {
+        console.log(`Requesting traces for task ID: ${taskId}`);
+        socket.emit('request_traces', { task_id: taskId });
+    } else if (!taskId) {
+        console.warn("Cannot request traces: Task ID is missing.");
+        // Proceed without server-side traces for this task
+        displayTraces(); // Display local/empty traces
+    } else {
+        console.error("Cannot request traces: WebSocket not connected.");
+        errorMsg("Not connected to real-time server. Cannot load traces.");
+        // Proceed without server-side traces for this task
+        displayTraces(); // Display local/empty traces
+    }
+
+    // Note: displayTraces() will now be primarily triggered by the 'initial_traces' event handler
+    // Let's clear the display initially and wait for the server response.
+    $('#comment_section').show(); // Show the section, but it will be empty initially
+    $('#comment_display_area').text('Loading traces...');
+    $('#comment_score_display').text('-');
+    $('#comment_nav_display').text('Trace -/-');
+    $('#prev_comment_btn').prop('disabled', true);
+    $('#next_comment_btn').prop('disabled', true);
+    $('#upvote_btn').prop('disabled', true);
+    $('#downvote_btn').prop('disabled', true);
+
 }
 
-function display_task_name(task_name, task_index, number_of_tasks) {
-    big_space = '&nbsp;'.repeat(4); 
-    document.getElementById('task_name').innerHTML = (
-        'Task name:' + big_space + task_name + big_space + (
-            task_index===null ? '' :
-            ( String(task_index) + ' out of ' + String(number_of_tasks) )
-        )
-    );
+
+function display_task_name(taskIdentifier) {
+    let displayName = taskIdentifier || "Untitled Task";
+
+    let indexText = "";
+    if (CURRENT_TASK_INDEX !== -1 && LOADED_TASK_LIST.length > 0) {
+        indexText = ` (${CURRENT_TASK_INDEX + 1}/${LOADED_TASK_LIST.length})`;
+    }
+
+    // Display format: "Task name: [ID/Name] (Index/Total)"
+    $('#task_name').html(`Task name:&nbsp;&nbsp;&nbsp;&nbsp;${displayName}${indexText}`);
 }
 
-function loadTaskFromFile(e) {
-    var file = e.target.files[0];
-    if (!file) {
-        errorMsg('No file selected');
+function updateListNavigationUI() {
+    if (CURRENT_TASK_INDEX !== -1 && LOADED_TASK_LIST.length > 0) {
+        $('#list_navigation').show();
+        $('#goto_id_controls').show(); // Show Go To ID when list is loaded
+        $('#task_index_display').text(`Task ${CURRENT_TASK_INDEX + 1}/${LOADED_TASK_LIST.length}`);
+        $('#prev_task_btn').prop('disabled', CURRENT_TASK_INDEX === 0);
+        $('#next_task_btn').prop('disabled', CURRENT_TASK_INDEX === LOADED_TASK_LIST.length - 1);
+    } else {
+        $('#list_navigation').hide();
+        $('#goto_id_controls').hide(); // Hide Go To ID if no list
+    }
+}
+
+// --- Trace Functions --- // Renamed section
+
+function displayTraces() { // Renamed function
+    if (CURRENT_TASK_INDEX < 0 || !LOADED_TASK_LIST[CURRENT_TASK_INDEX]) {
+        $('#comment_section').hide(); // Hide if no task loaded
         return;
     }
-    var reader = new FileReader();
-    reader.onload = function(e) {
-        var contents = e.target.result;
 
-        try {
-            contents = JSON.parse(contents);
-            train = contents['train'];
-            test = contents['test'];
-        } catch (e) {
-            errorMsg('Bad file format');
-            return;
+    const currentTask = LOADED_TASK_LIST[CURRENT_TASK_INDEX];
+    // Ensure 'comments' array exists (it should have been initialized in loadDataset)
+    if (!currentTask.comments) {
+        currentTask.comments = [];
+    }
+
+    // Sort traces by score descending (highest first)
+    const sortedTraces = [...currentTask.comments].sort((a, b) => {
+        if (b.score !== a.score) {
+            return b.score - a.score;
         }
-        loadJSONTask(train, test);
+        // Optional: tie-break by timestamp (newest first)
+        // return (b.timestamp || 0) - (a.timestamp || 0);
+        return 0; // Default: maintain original order on tie
+    });
 
-        $('#load_task_file_input')[0].value = "";
-        display_task_name(file.name, null, null);
-    };
-    reader.readAsText(file);
+    const totalTraces = sortedTraces.length;
+
+    if (totalTraces === 0) {
+        $('#comment_display_area').text('No reasoning traces added yet.');
+        $('#comment_score_display').text('0');
+        $('#comment_nav_display').text('Trace 0/0');
+        $('#prev_comment_btn').prop('disabled', true);
+        $('#next_comment_btn').prop('disabled', true);
+        $('#upvote_btn').prop('disabled', true);
+        $('#downvote_btn').prop('disabled', true);
+    } else {
+        // Ensure current trace index is valid
+        if (CURRENT_TRACE_INDEX >= totalTraces) {
+            CURRENT_TRACE_INDEX = totalTraces - 1;
+        }
+        if (CURRENT_TRACE_INDEX < 0) {
+            CURRENT_TRACE_INDEX = 0;
+        }
+
+        const traceToShow = sortedTraces[CURRENT_TRACE_INDEX];
+        // Display trace text, score, and potentially username
+        let traceHtml = $('<div>').text(traceToShow.text || '').html(); // Basic text display, escape HTML
+        if (traceToShow.username) {
+             traceHtml += `<br><span style="font-size: 0.8em; color: #555;"> - ${$('<div>').text(traceToShow.username).html()}</span>`; // Display username safely
+        }
+        $('#comment_display_area').html(traceHtml); // Use .html() to render the break and span
+        $('#comment_score_display').text(traceToShow.score || 0);
+        $('#comment_nav_display').text(`Trace ${CURRENT_TRACE_INDEX + 1}/${totalTraces}`);
+
+        // Enable/disable navigation buttons
+        $('#prev_comment_btn').prop('disabled', CURRENT_TRACE_INDEX === 0);
+        $('#next_comment_btn').prop('disabled', CURRENT_TRACE_INDEX === totalTraces - 1);
+        // Enable voting buttons
+        $('#upvote_btn').prop('disabled', false);
+        $('#downvote_btn').prop('disabled', false);
+    }
+
+    $('#comment_section').show(); // Make sure section is visible
 }
 
-function randomTask() {
-    var subset = "training";
-    $.getJSON("https://api.github.com/repos/fchollet/ARC/contents/data/" + subset, function(tasks) {
-        var task_index = Math.floor(Math.random() * tasks.length)
-        var task = tasks[task_index];
-        $.getJSON(task["download_url"], function(json) {
-            try {
-                train = json['train'];
-                test = json['test'];
-            } catch (e) {
-                errorMsg('Bad file format');
+function previousTrace() { // Renamed function
+    if (CURRENT_TASK_INDEX < 0) return;
+    if (CURRENT_TRACE_INDEX > 0) {
+        CURRENT_TRACE_INDEX--;
+        displayTraces(); // Call renamed function
+    }
+}
+
+function nextTrace() { // Renamed function
+    if (CURRENT_TASK_INDEX < 0) return;
+    const currentTask = LOADED_TASK_LIST[CURRENT_TASK_INDEX];
+    const totalTraces = currentTask.comments ? currentTask.comments.length : 0; // Still uses 'comments' array
+
+    if (CURRENT_TRACE_INDEX < totalTraces - 1) {
+        CURRENT_TRACE_INDEX++;
+        displayTraces(); // Call renamed function
+    }
+}
+
+function upvoteTrace() { // Renamed function
+    voteOnTrace(1);
+}
+
+function downvoteTrace() { // Renamed function
+    voteOnTrace(-1);
+}
+
+function voteOnTrace(voteChange) { // Renamed function
+     if (CURRENT_TASK_INDEX < 0 || !LOADED_TASK_LIST[CURRENT_TASK_INDEX]) return;
+    const currentTask = LOADED_TASK_LIST[CURRENT_TASK_INDEX];
+    if (!currentTask.comments || currentTask.comments.length === 0) return;
+
+    // Get the currently displayed trace based on the sorted order.
+    const sortedTraces = [...currentTask.comments].sort((a, b) => b.score - a.score);
+    if (CURRENT_TRACE_INDEX >= sortedTraces.length) return; // Index out of bounds
+
+    const displayedTraceObject = sortedTraces[CURRENT_TRACE_INDEX];
+
+    // Find this trace in the original task.comments array using its unique ID
+    // This relies on the server sending back a unique 'trace_id'
+    const originalTrace = currentTask.comments.find(c => c.trace_id === displayedTraceObject.trace_id);
+
+    if (originalTrace) {
+        // Emit vote event to server instead of changing locally
+        if (socket && socket.connected) {
+            console.log(`Emitting vote_trace: trace_id=${originalTrace.trace_id}, username=${USERNAME}, vote=${voteChange}`);
+            socket.emit('vote_trace', {
+                trace_id: originalTrace.trace_id,
+                username: USERNAME,
+                vote: voteChange
+            });
+            // Optionally disable buttons temporarily until update received
+            $('#upvote_btn').prop('disabled', true);
+            $('#downvote_btn').prop('disabled', true);
+        } else {
+            errorMsg("Cannot vote: Not connected to real-time server.");
+        }
+    } else {
+        // This case might happen if the trace_id isn't set correctly yet
+        console.error("Could not find the original trace to vote on. Displayed Object:", displayedTraceObject);
+        errorMsg("Error applying vote: Trace not found locally (might be missing ID).");
+    }
+}
+
+
+function addTrace() { // Renamed function
+    if (CURRENT_TASK_INDEX < 0 || !LOADED_TASK_LIST[CURRENT_TASK_INDEX]) {
+        errorMsg("No task loaded to add a reasoning trace to.");
+        return;
+    }
+    const traceText = $('#new_comment_text').val().trim(); // Use the same textarea ID for now
+    if (!traceText) {
+        errorMsg("Reasoning trace cannot be empty.");
+        return;
+    }
+
+    const currentTask = LOADED_TASK_LIST[CURRENT_TASK_INDEX];
+    const taskId = currentTask.id;
+
+    if (!taskId) {
+        errorMsg("Cannot add trace: Current task is missing an ID.");
+        return;
+    }
+
+    // Emit add_trace event to server
+    if (socket && socket.connected) {
+         console.log(`Emitting add_trace: task_id=${taskId}, username=${USERNAME}, text=${traceText}`);
+         socket.emit('add_trace', {
+             task_id: taskId,
+             username: USERNAME,
+             text: traceText
+         });
+         $('#new_comment_text').val(''); // Clear textarea immediately
+         infoMsg("Submitting reasoning trace..."); // Give feedback
+    } else {
+         errorMsg("Cannot add trace: Not connected to real-time server.");
+    }
+    // Don't add locally or refresh display, wait for broadcast
+}
+
+function downloadData() {
+    if (!LOADED_TASK_LIST || LOADED_TASK_LIST.length === 0) {
+        errorMsg("No dataset loaded to download.");
+        return;
+    }
+
+    try {
+        // Use a deep copy to avoid modifying the original data if needed later,
+        const dataToDownload = JSON.parse(JSON.stringify(LOADED_TASK_LIST));
+
+        // Convert the data (which includes traces) to a JSON string
+        const jsonString = JSON.stringify(dataToDownload, null, 2); // Use indentation for readability
+
+        // Create a Blob object
+        const blob = new Blob([jsonString], { type: 'application/json' });
+
+        // Create a temporary download link
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+
+        // Set the filename for the download
+        const filename = `${CURRENT_DATASET_NAME || 'dataset'}_with_traces.json`; // Update filename
+        link.download = filename;
+
+        // Programmatically click the link to trigger the download
+        document.body.appendChild(link); // Required for Firefox
+        link.click();
+
+        // Clean up the temporary link
+        document.body.removeChild(link);
+        URL.revokeObjectURL(link.href); // Free up memory
+
+        infoMsg(`Dataset with traces ('${filename}') download initiated.`); // Update message
+
+    } catch (e) {
+        console.error("Error preparing data for download:", e);
+        errorMsg("Failed to prepare data for download.");
+    }
+}
+
+
+// --- End Trace Functions --- // Renamed section
+
+
+// Removed loadTaskFromFile function
+
+function loadDataset(datasetName) {
+    // Prevent reloading the same dataset unnecessarily
+    if (CURRENT_DATASET_NAME === datasetName && LOADED_TASK_LIST.length > 0) {
+        infoMsg(`Dataset '${datasetName}' is already loaded.`);
+        return;
+    }
+
+    console.log(`Attempting to load dataset: ${datasetName}`); // Add log
+    resetTask(); // Full reset before loading new dataset
+    CURRENT_DATASET_NAME = datasetName;
+    // Correct the path: Go up one level from 'apps' to the root, then into 'data'
+    // const filename = `../data/${datasetName}.json`; // Path for direct file access (CORS issue)
+    const serverRoute = `/data/${datasetName}.json`; // Path for Flask server route
+
+    infoMsg(`Loading dataset '${datasetName}'...`); // Clear previous messages
+    errorMsg(''); // Clear previous error messages
+    $('#loaded_dataset_display').text(`Loading ${datasetName}...`);
+    console.log(`Fetching base data from ${serverRoute}...`); // Use server route
+
+    // Use Flask server route instead of direct file access
+    $.ajax({
+        url: serverRoute, // Use the server route
+        dataType: 'json',
+        success: function(data) {
+            console.log(`Successfully fetched base data for ${datasetName}. Processing...`);
+            if (!Array.isArray(data)) {
+                console.error(`Data from ${serverRoute} is not an array.`);
+                errorMsg(`Error: Base dataset file '${datasetName}' does not contain a valid JSON list.`);
+                resetTask();
+                $('#loaded_dataset_display').text(`Failed: Invalid format`);
+                $('#modal_bg').show();
+                $('#workspace').hide();
                 return;
             }
-            loadJSONTask(train, test);
-            //$('#load_task_file_input')[0].value = "";
-            infoMsg("Loaded task training/" + task["name"]);
-            display_task_name(task['name'], task_index, tasks.length);
-        })
-        .error(function(){
-          errorMsg('Error loading task');
-        });
-    })
-    .error(function(){
-      errorMsg('Error loading task list');
+            if (data.length === 0) {
+                console.error(`Data from ${serverRoute} is an empty array.`);
+                errorMsg(`Error: Base dataset '${datasetName}' is empty.`);
+                resetTask();
+                $('#loaded_dataset_display').text(`Failed: Empty dataset`);
+                $('#modal_bg').show();
+                $('#workspace').hide();
+                return;
+            }
+
+            console.log(`Base dataset ${datasetName} has ${data.length} tasks. Building ID map...`);
+            LOADED_TASK_LIST = data; // Store the base data
+            CURRENT_TASK_INDEX = 0; // Start at the first task
+
+            // Build the ID map and ensure 'comments' array exists (will be populated by WebSocket)
+            TASK_ID_MAP = {};
+            LOADED_TASK_LIST.forEach((task, index) => {
+                task.comments = []; // Initialize comments as empty, wait for server data
+                if (task.id) {
+                    TASK_ID_MAP[task.id] = index;
+                } else {
+                    console.warn(`Task at index ${index} in ${datasetName}.json is missing an 'id' field.`);
+                }
+            });
+            console.log(`ID map built and comments array initialized for ${datasetName}. Loading first task...`);
+
+            // Load the first task's base data into the UI
+            loadSingleTask(LOADED_TASK_LIST[0], LOADED_TASK_LIST[0].id || `${datasetName} Task 1`);
+            infoMsg(`Successfully loaded base data for ${LOADED_TASK_LIST.length} tasks from '${datasetName}' dataset.`);
+            $('#loaded_dataset_display').text(`Loaded: ${datasetName}`);
+            console.log(`Hiding modal and showing workspace for ${datasetName}.`);
+            $('#modal_bg').hide();
+            $('#workspace').show();
+
+            // WebSocket connection should already be established by $(document).ready
+            // loadSingleTask will emit 'request_traces'
+        },
+        error: function(jqXHR, textStatus, errorThrown) {
+            console.error(`Failed to load base data ${serverRoute}. Status: ${textStatus}, Error: ${errorThrown}`, jqXHR);
+            errorMsg(`Failed to load base dataset '${datasetName}'. Check server logs. Status: ${textStatus}.`);
+            resetTask();
+            $('#loaded_dataset_display').text(`Failed to load ${datasetName}`);
+            $('#workspace').hide();
+            $('#modal_bg').show();
+        }
     });
 }
 
+
+function randomTask() {
+    // Only pick from the currently loaded list
+    if (LOADED_TASK_LIST.length > 0) {
+        let randomIndex = Math.floor(Math.random() * LOADED_TASK_LIST.length);
+        // Avoid picking the same task consecutively if possible
+        if (LOADED_TASK_LIST.length > 1 && randomIndex === CURRENT_TASK_INDEX) {
+            randomIndex = (randomIndex + 1) % LOADED_TASK_LIST.length;
+        }
+        CURRENT_TASK_INDEX = randomIndex;
+        // Use task ID if available, otherwise construct a name
+        let taskIdentifier = LOADED_TASK_LIST[CURRENT_TASK_INDEX]?.id || `${CURRENT_DATASET_NAME} Task ${CURRENT_TASK_INDEX + 1}`;
+        loadSingleTask(LOADED_TASK_LIST[CURRENT_TASK_INDEX], taskIdentifier);
+        infoMsg(`Loaded random task ${CURRENT_TASK_INDEX + 1}/${LOADED_TASK_LIST.length} from '${CURRENT_DATASET_NAME}' dataset.`);
+    } else {
+        // No dataset loaded, show error or prompt
+        errorMsg("Please load a dataset first before selecting a random task.");
+    }
+}
+
+function previousTask() {
+    if (CURRENT_TASK_INDEX > 0) {
+        CURRENT_TASK_INDEX--;
+        let taskIdentifier = LOADED_TASK_LIST[CURRENT_TASK_INDEX]?.id || `${CURRENT_DATASET_NAME} Task ${CURRENT_TASK_INDEX + 1}`;
+        loadSingleTask(LOADED_TASK_LIST[CURRENT_TASK_INDEX], taskIdentifier);
+    }
+}
+
+function nextTask() {
+    if (CURRENT_TASK_INDEX < LOADED_TASK_LIST.length - 1) {
+        CURRENT_TASK_INDEX++;
+        let taskIdentifier = LOADED_TASK_LIST[CURRENT_TASK_INDEX]?.id || `${CURRENT_DATASET_NAME} Task ${CURRENT_TASK_INDEX + 1}`;
+        loadSingleTask(LOADED_TASK_LIST[CURRENT_TASK_INDEX], taskIdentifier);
+    }
+}
+
+function gotoTaskById() {
+    const taskId = $('#task_id_input').val().trim();
+    if (!taskId) {
+        errorMsg("Please enter a Task ID.");
+        return;
+    }
+
+    if (TASK_ID_MAP.hasOwnProperty(taskId)) {
+        const targetIndex = TASK_ID_MAP[taskId];
+        if (targetIndex !== CURRENT_TASK_INDEX) {
+            CURRENT_TASK_INDEX = targetIndex;
+            let taskIdentifier = LOADED_TASK_LIST[CURRENT_TASK_INDEX]?.id; // Should always have ID here
+            loadSingleTask(LOADED_TASK_LIST[CURRENT_TASK_INDEX], taskIdentifier);
+            infoMsg(`Navigated to task ID: ${taskId}`);
+            $('#task_id_input').val(''); // Clear input on success
+        } else {
+            infoMsg(`Already viewing task ID: ${taskId}`);
+        }
+    } else {
+        errorMsg(`Task ID '${taskId}' not found in the current '${CURRENT_DATASET_NAME}' dataset.`);
+    }
+}
+
+
 function nextTestInput() {
     if (TEST_PAIRS.length <= CURRENT_TEST_PAIR_INDEX + 1) {
-        errorMsg('No next test input. Pick another file?')
+        errorMsg('No next test input.') // Removed suggestion to pick another file
         return
     }
     CURRENT_TEST_PAIR_INDEX += 1;
@@ -210,16 +620,17 @@ function nextTestInput() {
     CURRENT_INPUT_GRID = convertSerializedGridToGridObject(values)
     fillTestInput(CURRENT_INPUT_GRID);
     $('#current_test_input_id_display').html(CURRENT_TEST_PAIR_INDEX + 1);
-    $('#total_test_input_count_display').html(test.length);
+    $('#total_test_input_count_display').html(TEST_PAIRS.length);
 }
 
 function submitSolution() {
     syncFromEditionGridToDataGrid();
     reference_output = TEST_PAIRS[CURRENT_TEST_PAIR_INDEX]['output'];
     submitted_output = CURRENT_OUTPUT_GRID.grid;
-    if (reference_output.length != submitted_output.length) {
-        errorMsg('Wrong solution.');
-        return
+    // Compare dimensions first
+    if (reference_output.length !== submitted_output.length || (reference_output.length > 0 && reference_output[0].length !== submitted_output[0].length)) {
+         errorMsg('Wrong solution dimensions.');
+         return;
     }
     for (var i = 0; i < reference_output.length; i++){
         ref_row = reference_output[i];
@@ -229,7 +640,6 @@ function submitSolution() {
                 return
             }
         }
-
     }
     infoMsg('Correct solution!');
 }
@@ -270,9 +680,131 @@ function initializeSelectable() {
     }
 }
 
+// --- WebSocket Connection & Event Handlers ---
+
+function connectWebSocket() {
+    // Connect to the Socket.IO server (adjust URL if server runs elsewhere)
+    console.log("Attempting to connect WebSocket...");
+    if (socket && socket.connected) {
+        console.log("WebSocket already connected.");
+        return;
+    }
+    // Connect to the server hosting the page, default port 5000
+    socket = io(`http://${window.location.hostname}:5000`);
+
+    socket.on('connect', () => {
+        console.log('WebSocket connected successfully. SID:', socket.id);
+        infoMsg('Connected to real-time server.');
+    });
+
+    socket.on('disconnect', (reason) => {
+        console.log('WebSocket disconnected:', reason);
+        errorMsg('Disconnected from real-time server. Refresh may be needed.');
+    });
+
+    socket.on('connect_error', (error) => {
+        console.error('WebSocket connection error:', error);
+        errorMsg('Failed to connect to real-time server.');
+    });
+
+    socket.on('connection_ack', (data) => {
+        console.log('Server Acknowledged Connection:', data.message);
+    });
+
+    socket.on('initial_traces', (data) => {
+        console.log('Received initial_traces for task', data.task_id, ':', data.traces);
+        const currentTask = LOADED_TASK_LIST[CURRENT_TASK_INDEX];
+        // Ensure this message is for the currently viewed task
+        if (currentTask && currentTask.id === data.task_id) {
+            // Replace local comments with server data
+            currentTask.comments = Array.isArray(data.traces) ? data.traces : [];
+            CURRENT_TRACE_INDEX = 0; // Reset view to the first trace
+            displayTraces(); // Update the display
+        } else {
+            console.log("Received initial_traces for a non-current task, ignoring for now.");
+        }
+    });
+
+    socket.on('new_trace', (newTrace) => {
+        console.log('Received new_trace:', newTrace);
+        const currentTask = LOADED_TASK_LIST[CURRENT_TASK_INDEX];
+        // Find the task in memory to add the trace to
+        const targetTask = LOADED_TASK_LIST.find(task => task.id === newTrace.task_id);
+        if (targetTask) {
+             if (!targetTask.comments) targetTask.comments = [];
+             // Avoid adding duplicates
+             if (!targetTask.comments.some(c => c.trace_id === newTrace.trace_id)) {
+                 targetTask.comments.push(newTrace);
+                 console.log(`Added new trace ${newTrace.trace_id} to task ${newTrace.task_id} locally.`);
+                 // If it's for the currently viewed task, refresh display
+                 if (currentTask && currentTask.id === newTrace.task_id) {
+                     CURRENT_TRACE_INDEX = 0; // Go to first trace after adding
+                     displayTraces();
+                 }
+             } else {
+                 console.log(`Duplicate new_trace message received for ${newTrace.trace_id}, ignoring.`);
+             }
+        } else {
+            console.warn(`Received new_trace for unknown task_id ${newTrace.task_id}`);
+        }
+    });
+
+    socket.on('trace_updated', (updatedInfo) => {
+        console.log('Received trace_updated:', updatedInfo);
+        const currentTask = LOADED_TASK_LIST[CURRENT_TASK_INDEX];
+        // Find the task and trace in memory and update score
+        const targetTask = LOADED_TASK_LIST.find(task => task.id === updatedInfo.task_id);
+        if (targetTask && targetTask.comments) {
+            const targetTrace = targetTask.comments.find(c => c.trace_id === updatedInfo.trace_id);
+            if (targetTrace) {
+                targetTrace.score = updatedInfo.score;
+                // Optionally update voters if needed: targetTrace.voters = updatedInfo.voters;
+                console.log(`Updated score for trace ${updatedInfo.trace_id} to ${updatedInfo.score} locally.`);
+                // If it's for the currently viewed task, refresh display
+                if (currentTask && currentTask.id === updatedInfo.task_id) {
+                    displayTraces();
+                }
+            } else {
+                 console.warn(`Received trace_updated for unknown trace_id ${updatedInfo.trace_id}`);
+            }
+        } else {
+             console.warn(`Received trace_updated for unknown task_id ${updatedInfo.task_id}`);
+        }
+        // Re-enable voting buttons
+        $('#upvote_btn').prop('disabled', false);
+        $('#downvote_btn').prop('disabled', false);
+    });
+
+     socket.on('trace_error', (error) => {
+        // Handle errors sent from the server related to traces/votes
+        console.error('Server Trace Error:', error.message);
+        errorMsg(`Server error: ${error.message}`);
+    });
+}
+
+
+// --- End WebSocket ---
+
+
 // Initial event binding.
 
 $(document).ready(function () {
+
+    // Initialize WebSocket connection on page load
+    connectWebSocket();
+
+    // Update username variable when input changes, prevent empty strings
+    $('#username_input').on('input change', function() { // Trigger on input and change
+        let name = $(this).val().trim();
+        USERNAME = name || "Anonymous"; // Use 'Anonymous' if empty or only whitespace
+        // Optionally, visually indicate if username is default
+        if (USERNAME === "Anonymous" && name !== "") {
+             // Maybe add a style or message if they typed spaces? For now, just trim.
+        }
+        console.log("Username set to:", USERNAME);
+    });
+
+
     $('#symbol_picker').find('.symbol_preview').click(function(event) {
         symbol_preview = $(event.target);
         $('#symbol_picker').find('.symbol_preview').each(function(i, preview) {
@@ -293,27 +825,35 @@ $(document).ready(function () {
         setUpEditionGridListeners($(jqGrid));
     });
 
-    $('.load_task').on('change', function(event) {
-        loadTaskFromFile(event);
-    });
-
-    $('.load_task').on('click', function(event) {
-      event.target.value = "";
-    });
+    // Removed event listeners for '.load_task'
 
     $('input[type=radio][name=tool_switching]').change(function() {
         initializeSelectable();
     });
-    
+
     $('input[type=text][name=size]').on('keydown', function(event) {
+        // Trigger resize on Enter key
         if (event.keyCode == 13) {
             resizeOutputGrid();
         }
     });
 
+    // Add event listener for Enter key in the Go To ID input
+    $('#task_id_input').on('keydown', function(event) {
+        if (event.keyCode == 13) { // 13 is the Enter key
+            gotoTaskById();
+        }
+    });
+
+
     $('body').keydown(function(event) {
+        // Ignore keydown events if focused in an input field (like Go To ID or username)
+        if ($(event.target).is('input, textarea')) {
+            return;
+        }
+
         // Copy and paste functionality.
-        if (event.which == 67) {
+        if (event.which == 67) { // Key 'C'
             // Press C
 
             selected = $('.ui-selected');
@@ -331,10 +871,10 @@ $(document).ready(function () {
             infoMsg('Cells copied! Select a target cell and press V to paste at location.');
 
         }
-        if (event.which == 86) {
-            // Press P
+        if (event.which == 86) { // Key 'V'
+            // Press V (Paste)
             if (COPY_PASTE_DATA.length == 0) {
-                errorMsg('No data to paste.');
+                errorMsg('No data to paste. Press C on selected cells to copy.');
                 return;
             }
             selected = $('.edition_grid').find('.ui-selected');

@@ -6,6 +6,8 @@
 
         <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.12.4/jquery.min.js"></script>
         <script src="https://code.jquery.com/ui/1.12.1/jquery-ui.js"></script>
+        <!-- Add Socket.IO Client Library -->
+        <script src="https://cdn.socket.io/4.6.0/socket.io.min.js" integrity="sha384-c79GN5VDEv+L8J5j3G8/t+vR49+F9e91f/vF+p6C/7z/7fQh8/7z" crossorigin="anonymous"></script>
         <script src="js/common.js"></script>
         <script src="js/testing_interface.js"></script>
 
@@ -18,13 +20,14 @@
     <body>
         <div id="modal_bg">
             <div id="modal">
-                <div>Welcome to the ARC testing interface. <br /> Choose a task file to start, or click on "Random task" to load one from the ARC project on GitHub.</div>
+                <div>Welcome to the ARC testing interface. <br /> Please select a dataset to begin.</div>
                 <br />
-                <input type="file" class="load_task"/>
-                <button onclick="randomTask()" id="random_task_btn">Random task</button>
+                <button onclick="loadDataset('original')" class="dataset_select_btn">Load Original Dataset</button>
+                <button onclick="loadDataset('augmented')" class="dataset_select_btn">Load Augmented Dataset</button>
+                <!-- Removed file input and random button from modal -->
             </div>
         </div>
-        <div id="workspace">
+        <div id="workspace" style="display: none;"> <!-- Hide workspace until dataset is loaded -->
 
             <div id="demonstration_examples_view">
                 <div class="text" id="task_demo_header">Task demonstration</div>
@@ -44,12 +47,33 @@
                 <div id="evaluation_output_editor">
 
                     <div id="load_task_control_btns">
-                        <label for="load_task_file_input">Load task JSON: </label>
-                        <input type="file" id="load_task_file_input" class="load_task" style="display: none;"/>
-                        <input type="button" value="Browse..." onclick="document.getElementById('load_task_file_input').click();" />
-                        <button onclick="randomTask()" id="random_task_btn"> Random... </button>
+                        <!-- Username Input -->
+                        <label for="username_input">Username:</label>
+                        <input type="text" id="username_input" size="15" placeholder="Enter username">
+                        <span style="margin-left: 20px;"></span> <!-- Spacer -->
+
+                        <!-- Dataset Selection Buttons -->
+                        <label>Select Dataset:</label>
+                        <button onclick="loadDataset('original')" id="load_original_btn">Original</button>
+                        <button onclick="loadDataset('augmented')" id="load_augmented_btn">Augmented</button>
+                        <span id="loaded_dataset_display" style="margin-left: 10px; font-style: italic;"></span>
+                        <br> <!-- Line break for clarity -->
+
+                        <!-- Navigation Controls -->
+                        <button onclick="randomTask()" id="random_task_btn"> Random Task </button>
+                        <span id="list_navigation" style="display: none;">
+                            <button onclick="previousTask()" id="prev_task_btn">< Prev</button>
+                            <span id="task_index_display">Task 1/1</span>
+                            <button onclick="nextTask()" id="next_task_btn">Next ></button>
+                        </span>
+                        <!-- Go to ID Controls -->
+                        <span id="goto_id_controls" style="margin-left: 15px;">
+                            <label for="task_id_input">Go to ID:</label>
+                            <input type="text" id="task_id_input" size="10" placeholder="Enter ID">
+                            <button onclick="gotoTaskById()" id="goto_task_btn">Go</button>
+                        </span>
                         <p>
-                        <label id='task_name' for="random_task_btn"> Task name: </label>
+                        <label id='task_name'> Task name: </label> <!-- Removed 'for' attribute -->
                         <p>
                         <label for="show_symbol_numbers">Show symbol numbers: </label>
                         <input type="checkbox" id="show_symbol_numbers" name="show_symbol_numbers"
@@ -123,6 +147,31 @@
                     <div id="error_display"></div>
                     <div id="info_display"></div>
                 </div>
+
+                <!-- Reasoning Trace Section -->
+                <div id="comment_section" style="clear: both; padding: 15px; margin-top: 15px; background-color: #e8e8e8; border-radius: 5px; display: none;"> <!-- Initially hidden -->
+                    <h4>Reasoning Traces for this Task</h4>
+                    <div id="comment_display_area" style="min-height: 60px; background-color: white; padding: 8px; border: 1px solid #ccc; margin-bottom: 10px; white-space: pre-wrap; word-wrap: break-word;">
+                        <!-- Current trace text will go here -->
+                        No reasoning traces added yet.
+                    </div>
+                    <div id="comment_controls">
+                        <button onclick="previousTrace()" id="prev_comment_btn" disabled>< Prev Trace</button> <!-- Renamed onclick -->
+                        <span id="comment_nav_display" style="margin: 0 10px;">Trace -/-</span>
+                        <button onclick="nextTrace()" id="next_comment_btn" disabled>Next Trace ></button> <!-- Renamed onclick -->
+                        <span style="margin-left: 20px;">Score: <span id="comment_score_display">0</span></span>
+                        <button onclick="upvoteTrace()" id="upvote_btn" style="margin-left: 10px;">👍 Upvote</button> <!-- Renamed onclick -->
+                        <button onclick="downvoteTrace()" id="downvote_btn">👎 Downvote</button> <!-- Renamed onclick -->
+                    </div>
+                    <div id="add_comment_area" style="margin-top: 15px;">
+                        <textarea id="new_comment_text" rows="3" style="width: 98%; padding: 5px;" placeholder="Add your reasoning trace..."></textarea>
+                        <button onclick="addTrace()" style="margin-top: 5px;">Add Reasoning Trace</button> <!-- Renamed onclick -->
+                        <!-- Moved Download Button Here -->
+                        <button onclick="downloadData()" id="download_data_btn" style="margin-left: 20px; float: right;">Download Data w/ Traces</button>
+                    </div>
+                </div>
+                <!-- End Reasoning Trace Section -->
+
             </div>
         </div>
     </body>
