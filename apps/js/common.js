@@ -66,12 +66,24 @@ function convertSerializedGridToGridObject(values) {
 }
 
 function fitCellsToContainer(jqGrid, height, width, containerHeight, containerWidth) {
-    candidate_height = Math.floor((containerHeight - height) / height);
-    candidate_width = Math.floor((containerWidth - width) / width);
-    size = Math.min(candidate_height, candidate_width);
+    // Calculate the maximum possible cell size based on container height and width constraints
+    let sizeH = Math.floor(containerHeight / height);
+    let sizeW = Math.floor(containerWidth / width);
+
+    // Use the smaller of the two sizes to ensure the grid fits proportionally
+    let size = Math.min(sizeH, sizeW);
+
+    // Ensure minimum size of 1px and limit by MAX_CELL_SIZE
+    size = Math.max(1, size);
     size = Math.min(MAX_CELL_SIZE, size);
+
+    // Apply the calculated square cell size
     jqGrid.find('.cell').css('height', size + 'px');
     jqGrid.find('.cell').css('width', size + 'px');
+
+    // // Adjust the container size to tightly wrap the grid - REMOVED - Let CSS handle container size.
+    // jqGrid.css('height', (size * height) + 'px');
+    // jqGrid.css('width', (size * width) + 'px');
 }
 
 function fillJqGridWithData(jqGrid, dataGrid) {

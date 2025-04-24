@@ -143,10 +143,17 @@ function fillPairPreview(pairId, inputGrid, outputGrid) {
         jqOutputGrid.appendTo(pairSlot);
     }
 
+    // Fill the grids first
     fillJqGridWithData(jqInputGrid, inputGrid);
-    fitCellsToContainer(jqInputGrid, inputGrid.height, inputGrid.width, 200, 200);
     fillJqGridWithData(jqOutputGrid, outputGrid);
-    fitCellsToContainer(jqOutputGrid, outputGrid.height, outputGrid.width, 200, 200);
+
+    // Define fixed, smaller constraints for the preview grids.
+    const previewConstraint = 150; // Use 150x150 box constraint
+
+    // Fit cells using the fixed constraints.
+    // fitCellsToContainer calculates the best proportional size within these bounds.
+    fitCellsToContainer(jqInputGrid, inputGrid.height, inputGrid.width, previewConstraint, previewConstraint);
+    fitCellsToContainer(jqOutputGrid, outputGrid.height, outputGrid.width, previewConstraint, previewConstraint);
 }
 
 // Loads a single task object into the UI (assumes username is validated and welcome screen is hidden)
@@ -673,7 +680,10 @@ function submitSolution() {
 function fillTestInput(inputGrid) {
     jqInputGrid = $('#evaluation_input');
     fillJqGridWithData(jqInputGrid, inputGrid);
-    fitCellsToContainer(jqInputGrid, inputGrid.height, inputGrid.width, 400, 400);
+    // Get the actual container dimensions after filling data
+    const containerHeight = jqInputGrid.height();
+    const containerWidth = jqInputGrid.width();
+    fitCellsToContainer(jqInputGrid, inputGrid.height, inputGrid.width, containerHeight, containerWidth);
 }
 
 function copyToOutput() {
