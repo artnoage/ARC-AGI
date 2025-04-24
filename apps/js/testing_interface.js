@@ -36,7 +36,8 @@ function resetTask(isListNavigation = false) {
         $('#task_index_display').text('');
         $('#loaded_dataset_display').text('');
         $('#goto_id_controls').hide();
-        $('#comment_section').hide(); // Hide trace section on full reset
+        // Comment section visibility is handled by loadDataset/initial state now
+        // $('#comment_section').hide();
         CURRENT_TRACE_INDEX = 0; // Reset trace index
     }
 
@@ -89,6 +90,8 @@ function setUpEditionGridListeners(jqGrid) {
             // Else: fill just this cell.
             setCellSymbol(cell, symbol);
         }
+        // Update distance after any edit/floodfill action
+        updateDistanceDisplay();
     });
 }
 
@@ -103,13 +106,15 @@ function resizeOutputGrid() {
     dataGrid = JSON.parse(JSON.stringify(CURRENT_OUTPUT_GRID.grid));
     CURRENT_OUTPUT_GRID = new Grid(height, width, dataGrid);
     refreshEditionGrid(jqGrid, CURRENT_OUTPUT_GRID);
+    updateDistanceDisplay(); // Update distance after resize
 }
 
 function resetOutputGrid() {
     syncFromEditionGridToDataGrid();
     CURRENT_OUTPUT_GRID = new Grid(3, 3);
     syncFromDataGridToEditionGrid();
-    resizeOutputGrid();
+    resizeOutputGrid(); // This already calls refreshEditionGrid and updateDistanceDisplay
+    // updateDistanceDisplay(); // No need to call again, resizeOutputGrid handles it
 }
 
 function copyFromInput() {
@@ -117,6 +122,7 @@ function copyFromInput() {
     CURRENT_OUTPUT_GRID = convertSerializedGridToGridObject(CURRENT_INPUT_GRID.grid);
     syncFromDataGridToEditionGrid();
     $('#output_grid_size').val(CURRENT_OUTPUT_GRID.height + 'x' + CURRENT_OUTPUT_GRID.width);
+    updateDistanceDisplay(); // Update distance after copy
 }
 
 function fillPairPreview(pairId, inputGrid, outputGrid) {
@@ -143,11 +149,11 @@ function fillPairPreview(pairId, inputGrid, outputGrid) {
     fitCellsToContainer(jqOutputGrid, outputGrid.height, outputGrid.width, 200, 200);
 }
 
-// Loads a single task object into the UI
+// Loads a single task object into the UI (assumes username is validated and welcome screen is hidden)
 function loadSingleTask(taskObject, taskName) {
     // Reset UI elements specific to a single task load
     resetTask(CURRENT_TASK_INDEX !== -1); // Pass true if navigating a list
-    $('#modal_bg').hide();
+    // Modal is removed, no need to hide it.
 
     try {
         train = taskObject['train'];
@@ -220,16 +226,18 @@ function loadSingleTask(taskObject, taskName) {
     }
 
     // Note: displayTraces() will now be primarily triggered by the 'initial_traces' event handler
-    // Let's clear the display initially and wait for the server response.
-    $('#comment_section').show(); // Show the section, but it will be empty initially
-    $('#comment_display_area').text('Loading traces...');
-    $('#comment_score_display').text('-');
+    // The comment section is shown after successful load, trace display handled by displayTraces/socket events
+    $('#comment_section').show(); // Ensure comment section is visible for the loaded task
+    $('#comment_display_area').text('Loading traces...'); // Placeholder until socket response
+    $('#comment_score_display').text('-'); // Placeholder
     $('#comment_nav_display').text('Trace -/-');
     $('#prev_comment_btn').prop('disabled', true);
     $('#next_comment_btn').prop('disabled', true);
     $('#upvote_btn').prop('disabled', true);
     $('#downvote_btn').prop('disabled', true);
 
+    // Update distance display for the newly loaded task/test pair
+    updateDistanceDisplay();
 }
 
 
@@ -388,6 +396,9 @@ function voteOnTrace(voteChange) { // Renamed function
 
 
 function addTrace() { // Renamed function
+    // Username is now validated before loading a dataset, so this check is redundant here.
+    // if (!USERNAME || USERNAME === "Anonymous") { ... }
+
     if (CURRENT_TASK_INDEX < 0 || !LOADED_TASK_LIST[CURRENT_TASK_INDEX]) {
         errorMsg("No task loaded to add a reasoning trace to.");
         return;
@@ -469,15 +480,26 @@ function downloadData() {
 // Removed loadTaskFromFile function
 
 function loadDataset(datasetName) {
+    // --- Username Check ---
+    if (!USERNAME || USERNAME === "Anonymous") {
+        $('#username_error').show(); // Show the error message near the username input
+        $('#username_input').focus(); // Focus the input
+        // Do not proceed with loading
+        return;
+    } else {
+        $('#username_error').hide(); // Hide error if username is provided
+    }
+    // --- End Username Check ---
+
     // Prevent reloading the same dataset unnecessarily
     if (CURRENT_DATASET_NAME === datasetName && LOADED_TASK_LIST.length > 0) {
         infoMsg(`Dataset '${datasetName}' is already loaded.`);
-        return;
+        return; // Already loaded, no need to proceed
     }
 
-    console.log(`Attempting to load dataset: ${datasetName}`); // Add log
+    console.log(`Attempting to load dataset: ${datasetName} with username: ${USERNAME}`); // Add log
     resetTask(); // Full reset before loading new dataset
-    CURRENT_DATASET_NAME = datasetName;
+    CURRENT_DATASET_NAME = datasetName; // Set dataset name early for potential error messages
     // Correct the path: Go up one level from 'apps' to the root, then into 'data'
     // const filename = `../data/${datasetName}.json`; // Path for direct file access (CORS issue)
     const serverRoute = `/data/${datasetName}.json`; // Path for Flask server route
@@ -498,8 +520,7 @@ function loadDataset(datasetName) {
                 errorMsg(`Error: Base dataset file '${datasetName}' does not contain a valid JSON list.`);
                 resetTask();
                 $('#loaded_dataset_display').text(`Failed: Invalid format`);
-                $('#modal_bg').show();
-                $('#workspace').hide();
+                // Modal removed, don't show/hide workspace, stay on welcome screen
                 return;
             }
             if (data.length === 0) {
@@ -507,8 +528,7 @@ function loadDataset(datasetName) {
                 errorMsg(`Error: Base dataset '${datasetName}' is empty.`);
                 resetTask();
                 $('#loaded_dataset_display').text(`Failed: Empty dataset`);
-                $('#modal_bg').show();
-                $('#workspace').hide();
+                // Modal removed, don't show/hide workspace, stay on welcome screen
                 return;
             }
 
@@ -529,12 +549,18 @@ function loadDataset(datasetName) {
             console.log(`ID map built and comments array initialized for ${datasetName}. Loading first task...`);
 
             // Load the first task's base data into the UI
+            // --- Hide Welcome, Show Main Content ---
+            $('#welcome_screen').hide();
+            $('#demonstration_examples_view').show();
+            $('#evaluation_view').show(); // Show the parent container for evaluation sections
+            // Note: comment_section visibility is handled within loadSingleTask/displayTraces
+            // --- End Hide Welcome ---
+
+            // Load the first task's base data into the UI
             loadSingleTask(LOADED_TASK_LIST[0], LOADED_TASK_LIST[0].id || `${datasetName} Task 1`);
             infoMsg(`Successfully loaded base data for ${LOADED_TASK_LIST.length} tasks from '${datasetName}' dataset.`);
-            $('#loaded_dataset_display').text(`Loaded: ${datasetName}`);
-            console.log(`Hiding modal and showing workspace for ${datasetName}.`);
-            $('#modal_bg').hide();
-            $('#workspace').show();
+            $('#loaded_dataset_display').text(`Loaded: ${datasetName}`); // Update status on welcome screen (though it's now hidden)
+            console.log(`Hid welcome screen and showed main content for ${datasetName}.`);
 
             // WebSocket connection should already be established by $(document).ready
             // loadSingleTask will emit 'request_traces'
@@ -544,8 +570,7 @@ function loadDataset(datasetName) {
             errorMsg(`Failed to load base dataset '${datasetName}'. Check server logs. Status: ${textStatus}.`);
             resetTask();
             $('#loaded_dataset_display').text(`Failed to load ${datasetName}`);
-            $('#workspace').hide();
-            $('#modal_bg').show();
+            // Don't hide workspace or show modal, stay on welcome screen on error
         }
     });
 }
@@ -621,6 +646,7 @@ function nextTestInput() {
     fillTestInput(CURRENT_INPUT_GRID);
     $('#current_test_input_id_display').html(CURRENT_TEST_PAIR_INDEX + 1);
     $('#total_test_input_count_display').html(TEST_PAIRS.length);
+    updateDistanceDisplay(); // Update distance for the new test input
 }
 
 function submitSolution() {
@@ -677,6 +703,74 @@ function initializeSelectable() {
                 }
             }
         );
+    }
+}
+
+
+// --- Hamming Distance Calculation and Display ---
+
+function calculateHammingDistance(grid1, grid2) {
+    // Check if grids are valid arrays
+    if (!Array.isArray(grid1) || !Array.isArray(grid2)) return Infinity;
+
+    const h1 = grid1.length;
+    const w1 = h1 > 0 ? grid1[0].length : 0;
+    const h2 = grid2.length;
+    const w2 = h2 > 0 ? grid2[0].length : 0;
+
+    // Check for dimension mismatch or empty grids
+    if (h1 !== h2 || w1 !== w2 || h1 === 0 || w1 === 0) {
+        return Infinity;
+    }
+
+    let diff = 0;
+    const totalPixels = h1 * w1;
+
+    for (let i = 0; i < h1; i++) {
+        // Ensure rows are arrays
+        if (!Array.isArray(grid1[i]) || !Array.isArray(grid2[i])) return Infinity;
+        for (let j = 0; j < w1; j++) {
+            if (grid1[i][j] !== grid2[i][j]) {
+                diff++;
+            }
+        }
+    }
+
+    return diff / totalPixels;
+}
+
+function updateDistanceDisplay() {
+    const distanceSpan = $('#distance_value_display');
+    // Check if we have valid test pairs and a valid index
+    if (!TEST_PAIRS || CURRENT_TEST_PAIR_INDEX < 0 || CURRENT_TEST_PAIR_INDEX >= TEST_PAIRS.length || !TEST_PAIRS[CURRENT_TEST_PAIR_INDEX]['output']) {
+        distanceSpan.text('N/A'); // Not Applicable if no solution available
+        return;
+    }
+
+    const correctOutputGrid = TEST_PAIRS[CURRENT_TEST_PAIR_INDEX]['output'];
+    // Ensure CURRENT_OUTPUT_GRID reflects the latest state of the UI grid
+    syncFromEditionGridToDataGrid();
+    const userOutputGrid = CURRENT_OUTPUT_GRID.grid;
+
+    const distance = calculateHammingDistance(userOutputGrid, correctOutputGrid);
+
+    if (distance === Infinity) {
+        distanceSpan.text('Infinity (Size Mismatch)');
+    } else {
+        // Format to 2 decimal places for readability
+        distanceSpan.text(distance.toFixed(2));
+    }
+}
+
+
+function toggleDistanceDisplay() {
+    const isChecked = $('#show_distance_toggle').prop('checked');
+    const controlsDiv = $('#distance_display_controls');
+    if (isChecked) {
+        controlsDiv.removeClass('distance-hidden');
+        updateDistanceDisplay(); // Update display immediately when shown
+    } else {
+        controlsDiv.addClass('distance-hidden');
     }
 }
 
@@ -790,20 +884,29 @@ function connectWebSocket() {
 
 $(document).ready(function () {
 
+    // --- Initial UI State ---
+    // Show only the welcome screen initially
+    $('#welcome_screen').show();
+    $('#demonstration_examples_view').hide();
+    $('#evaluation_view').hide();
+    $('#comment_section').hide(); // Ensure comment section is also hidden initially
+    // --- End Initial UI State ---
+
     // Initialize WebSocket connection on page load
     connectWebSocket();
 
-    // Update username variable when input changes, prevent empty strings
+    // Update username variable when input changes, hide error on input
     $('#username_input').on('input change', function() { // Trigger on input and change
         let name = $(this).val().trim();
         USERNAME = name || "Anonymous"; // Use 'Anonymous' if empty or only whitespace
-        // Optionally, visually indicate if username is default
-        if (USERNAME === "Anonymous" && name !== "") {
-             // Maybe add a style or message if they typed spaces? For now, just trim.
+        if (name) {
+            $('#username_error').hide(); // Hide error message when user starts typing
         }
         console.log("Username set to:", USERNAME);
     });
 
+    // Set initial distance display visibility based on checkbox state
+    toggleDistanceDisplay();
 
     $('#symbol_picker').find('.symbol_preview').click(function(event) {
         symbol_preview = $(event.target);
@@ -913,6 +1016,8 @@ $(document).ready(function () {
                         setCellSymbol(cell, symbol);
                     }
                 }
+                // Update distance after paste
+                updateDistanceDisplay();
             } else {
                 errorMsg('Can only paste at a specific location; only select *one* cell as paste destination.');
             }

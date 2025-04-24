@@ -1,6 +1,9 @@
 import os
 import json
 import logging
+import time
+import shutil # For file copying
+from datetime import datetime, timedelta # For timestamp comparison
 from flask import Flask, send_from_directory, jsonify, request
 from flask_socketio import SocketIO, emit
 
@@ -8,8 +11,10 @@ from flask_socketio import SocketIO, emit
 logging.basicConfig(level=logging.INFO)
 APP_DIR = os.path.abspath(os.path.dirname(__file__))
 DATA_DIR = os.path.join(APP_DIR, 'data')
+BACKUP_DIR = os.path.join(DATA_DIR, 'backups') # Backup directory
 APPS_STATIC_DIR = os.path.join(APP_DIR, 'apps')
 TRACE_STORE_FILE = os.path.join(DATA_DIR, 'traces_store.json')
+BACKUP_INTERVAL = timedelta(hours=1) # Backup interval (1 hour)
 
 # --- Flask App Setup ---
 app = Flask(__name__, static_folder=None) # Disable default static folder
@@ -64,6 +69,62 @@ def save_trace_data():
             logging.debug(f"Saved trace data to {TRACE_STORE_FILE}")
     except Exception as e:
         logging.error(f"Error saving trace store file {TRACE_STORE_FILE}: {e}")
+    finally:
+        # Attempt backup regardless of main save success, but log potential issues
+        try:
+            backup_trace_data_hourly()
+        except Exception as backup_e:
+            logging.error(f"Error during hourly backup process: {backup_e}")
+
+
+def backup_trace_data_hourly():
+    """Creates a timestamped backup of the trace store if the last backup is older than BACKUP_INTERVAL."""
+    try:
+        # Ensure backup directory exists
+        os.makedirs(BACKUP_DIR, exist_ok=True)
+
+        # Find the latest backup file
+        latest_backup_time = None
+        backup_files = [f for f in os.listdir(BACKUP_DIR) if f.startswith('traces_store_') and f.endswith('.json')]
+        if backup_files:
+            timestamps = []
+            for fname in backup_files:
+                try:
+                    # Extract timestamp string (YYYYMMDD_HHMMSS)
+                    ts_str = fname.replace('traces_store_', '').replace('.json', '')
+                    timestamps.append(datetime.strptime(ts_str, '%Y%m%d_%H%M%S'))
+                except ValueError:
+                    logging.warning(f"Could not parse timestamp from backup filename: {fname}")
+            if timestamps:
+                latest_backup_time = max(timestamps)
+
+        # Check if backup is needed
+        now = datetime.now()
+        should_backup = False
+        if latest_backup_time is None:
+            should_backup = True # First backup
+            logging.info("No previous backups found. Creating initial backup.")
+        elif now - latest_backup_time >= BACKUP_INTERVAL:
+            should_backup = True
+            logging.info(f"Last backup ({latest_backup_time}) is older than {BACKUP_INTERVAL}. Creating new backup.")
+        else:
+            logging.debug(f"Last backup ({latest_backup_time}) is recent. Skipping backup.")
+
+        # Perform backup if needed
+        if should_backup:
+            if not os.path.exists(TRACE_STORE_FILE):
+                logging.warning(f"Trace store file {TRACE_STORE_FILE} does not exist. Cannot create backup.")
+                return
+
+            timestamp_str = now.strftime('%Y%m%d_%H%M%S')
+            backup_filename = f"traces_store_{timestamp_str}.json"
+            backup_filepath = os.path.join(BACKUP_DIR, backup_filename)
+            shutil.copy2(TRACE_STORE_FILE, backup_filepath) # copy2 preserves metadata
+            logging.info(f"Successfully created backup: {backup_filepath}")
+
+    except Exception as e:
+        logging.error(f"Failed to perform hourly backup: {e}")
+
 
 # Load initial data on startup
 base_task_data['original'] = load_base_task_data('original')
@@ -73,8 +134,8 @@ load_trace_data()
 # --- HTTP Routes ---
 @app.route('/')
 def index():
-    """Serves the main index.html launcher."""
-    return send_from_directory(APP_DIR, 'index.html')
+    """Serves the testing interface directly."""
+    return send_from_directory(APPS_STATIC_DIR, 'testing_interface.html')
 
 @app.route('/apps/<path:filename>')
 def serve_apps_files(filename):
@@ -136,7 +197,7 @@ def handle_add_trace(data):
         'username': username,
         'text': text,
         'score': 0,
-        'timestamp': socketio.server.eio.time(), # Use server time
+        'timestamp': time.time(), # Use standard time module for timestamp
         'voters': {} # Initialize empty voters dict
     }
 

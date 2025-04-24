@@ -6,30 +6,41 @@
 
         <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.12.4/jquery.min.js"></script>
         <script src="https://code.jquery.com/ui/1.12.1/jquery-ui.js"></script>
-        <!-- Add Socket.IO Client Library -->
-        <script src="https://cdn.socket.io/4.6.0/socket.io.min.js" integrity="sha384-c79GN5VDEv+L8J5j3G8/t+vR49+F9e91f/vF+p6C/7z/7fQh8/7z" crossorigin="anonymous"></script>
-        <script src="js/common.js"></script>
-        <script src="js/testing_interface.js"></script>
+        <!-- Add Socket.IO Client Library (removed integrity/crossorigin for simplicity) -->
+        <script src="https://cdn.socket.io/4.6.0/socket.io.min.js"></script>
+        <script src="/apps/js/common.js"></script>
+        <script src="/apps/js/testing_interface.js"></script>
 
-        <link rel="stylesheet" type="text/css" href="css/common.css">
-        <link rel="stylesheet" type="text/css" href="css/testing_interface.css">
+        <link rel="stylesheet" type="text/css" href="/apps/css/common.css">
+        <link rel="stylesheet" type="text/css" href="/apps/css/testing_interface.css">
 
         <link href="https://fonts.googleapis.com/css?family=Open+Sans&display=swap" rel="stylesheet">
 
     </head>
     <body>
-        <div id="modal_bg">
-            <div id="modal">
-                <div>Welcome to the ARC testing interface. <br /> Please select a dataset to begin.</div>
-                <br />
-                <button onclick="loadDataset('original')" class="dataset_select_btn">Load Original Dataset</button>
-                <button onclick="loadDataset('augmented')" class="dataset_select_btn">Load Augmented Dataset</button>
-                <!-- Removed file input and random button from modal -->
-            </div>
-        </div>
-        <div id="workspace" style="display: none;"> <!-- Hide workspace until dataset is loaded -->
+        <!-- Modal removed -->
+        <div id="workspace"> <!-- Workspace is now initially visible to show the welcome screen -->
 
-            <div id="demonstration_examples_view">
+            <!-- New Welcome Screen -->
+            <div id="welcome_screen">
+                <h2>Welcome to the ARC testing interface</h2>
+                <p>Please enter a username and select a dataset to begin.</p>
+                <div style="margin-bottom: 15px;">
+                    <label for="username_input" style="margin-right: 5px;">Username:</label>
+                    <input type="text" id="username_input" size="20" placeholder="Enter username">
+                    <span id="username_error" style="color: red; margin-left: 10px; display: none;">Username is required!</span>
+                </div>
+                <div>
+                    <label style="margin-right: 10px;">Select Dataset:</label>
+                    <button onclick="loadDataset('original')" class="dataset_select_btn">Load Original Dataset</button>
+                    <button onclick="loadDataset('augmented')" class="dataset_select_btn">Load Augmented Dataset</button>
+                    <span id="loaded_dataset_display" style="margin-left: 10px; font-style: italic;"></span>
+                </div>
+            </div>
+            <!-- End New Welcome Screen -->
+
+            <!-- Main content areas initially hidden -->
+            <div id="demonstration_examples_view" style="display: none;">
                 <div class="text" id="task_demo_header">Task demonstration</div>
                 <div id="task_preview"></div>
             </div>
@@ -47,17 +58,7 @@
                 <div id="evaluation_output_editor">
 
                     <div id="load_task_control_btns">
-                        <!-- Username Input -->
-                        <label for="username_input">Username:</label>
-                        <input type="text" id="username_input" size="15" placeholder="Enter username">
-                        <span style="margin-left: 20px;"></span> <!-- Spacer -->
-
-                        <!-- Dataset Selection Buttons -->
-                        <label>Select Dataset:</label>
-                        <button onclick="loadDataset('original')" id="load_original_btn">Original</button>
-                        <button onclick="loadDataset('augmented')" id="load_augmented_btn">Augmented</button>
-                        <span id="loaded_dataset_display" style="margin-left: 10px; font-style: italic;"></span>
-                        <br> <!-- Line break for clarity -->
+                        <!-- Dataset Selection Buttons Removed from here -->
 
                         <!-- Navigation Controls -->
                         <button onclick="randomTask()" id="random_task_btn"> Random Task </button>
@@ -86,6 +87,12 @@
                                 <label for="output_grid_size">Change grid size: </label>
                                 <input type="text" id="output_grid_size" class="grid_size_field" name="size" value="3x3">
                                 <button onclick="resizeOutputGrid()" id="resize_btn">Resize</button>
+                            </div>
+
+                            <div id="distance_display_controls" style="margin-top: 5px; margin-bottom: 5px;">
+                                <input type="checkbox" id="show_distance_toggle" checked onchange="toggleDistanceDisplay()">
+                                <label for="show_distance_toggle" style="margin-right: 10px;">Show Distance:</label>
+                                <span id="distance_value_display" style="font-weight: bold;">N/A</span>
                             </div>
 
                             <button onclick="copyFromInput()">Copy from input</button>
@@ -156,16 +163,17 @@
                         No reasoning traces added yet.
                     </div>
                     <div id="comment_controls">
-                        <button onclick="previousTrace()" id="prev_comment_btn" disabled>< Prev Trace</button> <!-- Renamed onclick -->
+                        <button onclick="previousTrace()" id="prev_comment_btn" disabled>< Prev Trace</button> <!-- Corrected onclick -->
                         <span id="comment_nav_display" style="margin: 0 10px;">Trace -/-</span>
-                        <button onclick="nextTrace()" id="next_comment_btn" disabled>Next Trace ></button> <!-- Renamed onclick -->
+                        <button onclick="nextTrace()" id="next_comment_btn" disabled>Next Trace ></button> <!-- Corrected onclick -->
                         <span style="margin-left: 20px;">Score: <span id="comment_score_display">0</span></span>
-                        <button onclick="upvoteTrace()" id="upvote_btn" style="margin-left: 10px;">👍 Upvote</button> <!-- Renamed onclick -->
-                        <button onclick="downvoteTrace()" id="downvote_btn">👎 Downvote</button> <!-- Renamed onclick -->
+                        <button onclick="upvoteTrace()" id="upvote_btn" style="margin-left: 10px;">👍 Upvote</button> <!-- Corrected onclick -->
+                        <button onclick="downvoteTrace()" id="downvote_btn">👎 Downvote</button> <!-- Corrected onclick -->
                     </div>
                     <div id="add_comment_area" style="margin-top: 15px;">
+                        <!-- Username Input Removed from here -->
                         <textarea id="new_comment_text" rows="3" style="width: 98%; padding: 5px;" placeholder="Add your reasoning trace..."></textarea>
-                        <button onclick="addTrace()" style="margin-top: 5px;">Add Reasoning Trace</button> <!-- Renamed onclick -->
+                        <button onclick="addTrace()" style="margin-top: 5px;">Add Reasoning Trace</button> <!-- Corrected onclick -->
                         <!-- Moved Download Button Here -->
                         <button onclick="downloadData()" id="download_data_btn" style="margin-left: 20px; float: right;">Download Data w/ Traces</button>
                     </div>

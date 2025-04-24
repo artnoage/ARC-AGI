@@ -1,28 +1,35 @@
 body {
     font-family: 'Open Sans', sans-serif;
     min-width: 1410px;
+    background-color: #2c2c2c; /* Dark background */
+    color: #e0e0e0; /* Light text */
 }
 
 #workspace {
     width: 1410px;
     margin-left: auto;
     margin-right: auto;
+    display: flex; /* Use Flexbox for layout */
 }
 
 #demonstration_examples_view {
-    float: left;
+    /* float: left; Removed float */
     width: 450px;
     margin: 10px;
     margin-right: 5px;
-    background-color: #d5d5d5;
+    background-color: #3a3a3a; /* Darker panel background */
+    border: 1px solid #4a4a4a;
+    border-radius: 5px;
 }
 
 #evaluation_view {
-    float: left;
+    /* float: left; Removed float */
     width: 930px;
     margin: 10px;
     margin-left: 5px;
-    background-color: #d5d5d5;
+    background-color: #3a3a3a; /* Darker panel background */
+    border: 1px solid #4a4a4a;
+    border-radius: 5px;
     min-height: 850px;
 }
 
@@ -42,20 +49,24 @@ body {
     float: left;
     margin-top: 10px;
     margin-bottom: 0;
-    background: white;
+    background: #444; /* Darker control background */
+    border: 1px solid #555;
+    border-radius: 4px;
     width: 100%;
-    padding-top: 5px;
-    padding-bottom: 5px;
+    padding: 8px 5px; /* Adjusted padding */
+    box-sizing: border-box; /* Include padding in width */
 }
 
 #editor_grid_control_btns {
     float: left;
     margin-top: 10px;
     margin-bottom: 10px;
-    background: white;
+    background: #444; /* Darker control background */
+    border: 1px solid #555;
+    border-radius: 4px;
     width: 100%;
-    padding-top: 5px;
-    padding-bottom: 5px;
+    padding: 8px 5px; /* Adjusted padding */
+    box-sizing: border-box; /* Include padding in width */
 }
 
 #resize_control_btns {
@@ -67,13 +78,45 @@ body {
 #submit_solution_btn {
     color: white;
     border-radius: 4px;
-    text-shadow: 0 1px 1px rgba(0, 0, 0, 0.2);
-    background: rgb(28, 184, 65);
+    text-shadow: 0 1px 1px rgba(0, 0, 0, 0.4); /* Darker shadow */
+    background: #4CAF50; /* Slightly different green */
+    border: none;
+    padding: 8px 15px;
+    cursor: pointer;
+}
+
+#submit_solution_btn:hover {
+    background: #45a049; /* Darker green on hover */
 }
 
 #submit_solution_btn:active {
-  background: blue;
+  background: #39843c; /* Even darker green when active */
 }
+
+button, input[type="button"] {
+    background-color: #555;
+    color: #e0e0e0;
+    border: 1px solid #666;
+    padding: 5px 10px;
+    border-radius: 3px;
+    cursor: pointer;
+    margin-left: 10px;
+}
+
+button:hover, input[type="button"]:hover {
+    background-color: #666;
+}
+
+button:active, input[type="button"]:active {
+    background-color: #444;
+}
+
+button:disabled {
+    background-color: #444;
+    color: #888;
+    cursor: not-allowed;
+}
+
 
 button:focus {outline:0;}
 
@@ -104,11 +147,23 @@ button:focus {outline:0;}
 
 label {
     margin-left: 10px;
+    vertical-align: middle; /* Align labels better */
 }
 
-input, button {
+input[type="text"], input[type="number"] {
+    background-color: #555;
+    color: #e0e0e0;
+    border: 1px solid #666;
+    padding: 5px;
+    border-radius: 3px;
     margin-left: 10px;
 }
+
+input:focus {
+    outline: none;
+    border-color: #77aaff; /* Highlight focus */
+}
+
 
 #resize_btn {
     margin-left: 0;
@@ -117,28 +172,29 @@ input, button {
 /*Task demonstration*/
 
 .pair_preview {
-    height: 200px;
+    height: 160px; /* Reduced height */
     padding: 5px;
-    border-bottom: solid 1px #a1a1a1;
+    border-bottom: solid 1px #4a4a4a; /* Darker border */
 }
 .input_preview {
-    height: 200px;
-    width: 200px;
+    height: 150px; /* Reduced height */
+    width: 150px;  /* Reduced width */
     float: left;
 }
 .output_preview {
-    height: 200px;
-    width: 200px;
+    height: 150px; /* Reduced height */
+    width: 150px;  /* Reduced width */
     float: left;
-    margin-left: 35px;
+    margin-left: 25px; /* Reduced margin */
 }
 
 .text {
     text-align: center;
-    background: white;
-    padding-top: 5px;
-    padding-bottom: 5px;
+    background: #444; /* Darker background for text areas */
+    color: #e0e0e0;
+    padding: 5px 0;
     margin-bottom: 10px;
+    border-radius: 3px;
 }
 
 #task_demo_header {
@@ -168,6 +224,29 @@ input, button {
     margin-left: 70px;
 }
 
+/* Alignment fix for Go to ID */
+#goto_id_controls { /* Corrected ID */
+    display: inline-flex; /* Use flexbox for alignment */
+    align-items: center; /* Vertically center items */
+    margin-left: 20px; /* Space from previous elements */
+    vertical-align: middle; /* Align the whole group */
+}
+
+#goto_id_controls label { /* Corrected parent ID */
+    margin-left: 0; /* Remove default label margin */
+    margin-right: 5px; /* Space between label and input */
+}
+
+#task_id_input { /* Corrected ID */
+    width: 60px; /* Adjust width as needed */
+    margin-left: 0; /* Remove default input margin */
+    margin-right: 5px; /* Space between input and button */
+}
+
+#goto_task_btn { /* Corrected ID */
+    margin-left: 0; /* Remove default button margin */
+}
+
 /* Styles for task list navigation */
 #list_navigation {
     display: inline-block; /* Keep it on the same line */
@@ -189,34 +268,138 @@ input, button {
 
 /* Comment Section Styles */
 #comment_section {
-    border-top: 2px solid #bbb; /* Separator line */
+    clear: both; /* Ensure it clears floats above */
+    background-color: #444; /* Darker background for the whole section */
+    border: 1px solid #555; /* Consistent border */
+    border-radius: 5px;
+    padding: 15px;
     margin-top: 20px;
-    padding-top: 15px;
 }
 
 #comment_section h4 {
     margin-top: 0;
-    margin-bottom: 10px;
-    color: #333;
+    margin-bottom: 15px; /* Increased bottom margin */
+    color: #e0e0e0; /* Light text */
+    border-bottom: 1px solid #555; /* Add a separator line */
+    padding-bottom: 10px; /* Space below the line */
 }
 
 #comment_display_area {
-    background-color: #fff;
-    border: 1px solid #ccc;
+    background-color: #333; /* Even darker background for display */
+    border: 1px solid #4a4a4a; /* Slightly lighter border for contrast */
+    color: #e0e0e0; /* Light text */
     padding: 10px;
-    min-height: 50px;
-    margin-bottom: 10px;
+    min-height: 60px; /* Slightly taller */
+    margin-bottom: 15px; /* Increased bottom margin */
     white-space: pre-wrap; /* Preserve whitespace and wrap text */
     word-wrap: break-word;
     font-size: 0.95em;
     line-height: 1.4;
+    border-radius: 4px; /* Slightly more rounded */
 }
 
-#comment_controls button, #add_comment_area button {
+#comment_controls {
+    margin-bottom: 15px; /* Space below controls */
+}
+
+#comment_controls span {
+    margin: 0 10px; /* Consistent spacing for text spans */
+    color: #ccc; /* Slightly dimmer text */
+}
+
+#comment_controls button {
+    /* Use general button styles */
+    padding: 4px 10px; /* Adjust padding */
+}
+
+#add_comment_area {
+    margin-top: 15px;
+    border-top: 1px solid #555; /* Separator line */
+    padding-top: 15px; /* Space above textarea */
+}
+
+/* Welcome Screen Styles */
+#welcome_screen {
+    background-color: #3a3a3a; /* Dark panel background */
+    color: #e0e0e0; /* Light text */
+    border: 1px solid #4a4a4a;
+    border-radius: 8px;
+    padding: 30px;
+    margin: 50px auto; /* Center horizontally, add top/bottom margin */
+    width: 600px; /* Set a fixed width */
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+    text-align: center; /* Center text */
+}
+
+#welcome_screen h2 {
+    margin-top: 0;
+    margin-bottom: 20px;
+    color: #ffffff; /* Brighter white for header */
+}
+
+#welcome_screen p {
+    margin-bottom: 25px;
+    color: #cccccc; /* Slightly dimmer text */
+}
+
+#welcome_screen div {
+    margin-bottom: 20px; /* Space between rows */
+    display: flex; /* Use flex for alignment within rows */
+    justify-content: center; /* Center items horizontally */
+    align-items: center; /* Center items vertically */
+}
+
+#welcome_screen label {
+    margin-right: 10px; /* Space after labels */
+    margin-left: 0; /* Reset default label margin */
+    color: #cccccc;
+    flex-shrink: 0; /* Prevent labels from shrinking */
+}
+
+#welcome_screen input[type="text"] {
+    /* Use existing input styles */
+    width: 200px; /* Adjust width */
+}
+
+#welcome_screen .dataset_select_btn {
+    /* Use general button styles */
+    background-color: #555;
+    color: #e0e0e0;
+    border: 1px solid #666;
+    padding: 8px 15px; /* Slightly larger padding */
+    border-radius: 4px;
+    cursor: pointer;
+    margin-left: 10px; /* Keep margin */
+    transition: background-color 0.2s ease;
+}
+
+#welcome_screen .dataset_select_btn:hover {
+    background-color: #666;
+}
+
+#welcome_screen .dataset_select_btn:active {
+    background-color: #444;
+}
+
+#username_error {
+    color: #ff6b6b; /* Brighter red for error */
+    margin-left: 10px;
+    font-size: 0.9em;
+}
+
+#loaded_dataset_display {
+    color: #a0a0a0; /* Dimmer color for status */
+    font-style: italic;
+    margin-left: 15px;
+}
+
+
+/* Use general button styles defined earlier */
+/* #comment_controls button, #add_comment_area button {
     padding: 3px 8px;
     font-size: 0.9em;
     cursor: pointer;
-}
+} */
 
 #comment_controls button:disabled {
     cursor: not-allowed;
@@ -231,7 +414,15 @@ input, button {
     display: block;
     width: calc(100% - 12px); /* Account for padding */
     margin-bottom: 5px;
-    border: 1px solid #ccc;
+    border: 1px solid #555; /* Darker border */
+    background-color: #555; /* Darker background */
+    color: #e0e0e0; /* Light text */
     padding: 5px;
     font-family: inherit; /* Use the same font as the body */
+    border-radius: 4px; /* Slightly more rounded */
+}
+
+/* Distance Display Styles */
+#distance_display_controls.distance-hidden #distance_value_display {
+    display: none;
 }

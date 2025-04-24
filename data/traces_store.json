@@ -1,0 +1,37 @@
+{
+  "007bbfb7": [
+    {
+      "trace_id": "007bbfb7_art_amtmgWu_",
+      "task_id": "007bbfb7",
+      "username": "art",
+      "text": "art",
+      "score": 1,
+      "timestamp": 1745501707.9625788,
+      "voters": {
+        "art": 1
+      }
+    },
+    {
+      "trace_id": "007bbfb7_bebo_5Gj9g7Bg",
+      "task_id": "007bbfb7",
+      "username": "bebo",
+      "text": "who is your daddy",
+      "score": 0,
+      "timestamp": 1745506222.789474,
+      "voters": {}
+    }
+  ],
+  "00d62c1b": [
+    {
+      "trace_id": "00d62c1b_art_JYQby_VQ",
+      "task_id": "00d62c1b",
+      "username": "art",
+      "text": "who is this",
+      "score": 1,
+      "timestamp": 1745501739.1913006,
+      "voters": {
+        "art": 1
+      }
+    }
+  ]
+}

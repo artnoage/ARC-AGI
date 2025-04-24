@@ -25,15 +25,20 @@ def merge_json_files(input_folder, output_file):
                     if isinstance(content, list):
                         processed_list = []
                         for item in content:
-                            # Ensure item is a dictionary before checking/adding 'id'
-                            if isinstance(item, dict) and 'id' not in item:
-                                item['id'] = file_id
+                            # Ensure item is a dictionary before checking/adding 'id' and 'created_by'
+                            if isinstance(item, dict):
+                                if 'id' not in item:
+                                    item['id'] = file_id
+                                if 'created_by' not in item: # Only add if not present
+                                    item['created_by'] = "gkamradt"
                             processed_list.append(item) # Append modified or original item
                         merged_data.extend(processed_list) # Extend with processed items
                     elif isinstance(content, dict):
-                        # Ensure content is a dictionary before checking/adding 'id'
+                        # Ensure content is a dictionary before checking/adding 'id' and 'created_by'
                         if 'id' not in content:
                             content['id'] = file_id
+                        if 'created_by' not in content: # Only add if not present
+                            content['created_by'] = "gkamradt"
                         merged_data.append(content) # Append modified or original object
                     else:
                         # If content is not a list or dict (e.g., string, number), append directly
