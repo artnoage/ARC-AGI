@@ -147,6 +147,63 @@ function changeSymbolVisibility() {
     });
 }
 
+// Function to transpose a 2D array (grid)
+function transposeGrid(grid) {
+    if (!grid || grid.length === 0 || !grid[0] || grid[0].length === 0) {
+        return []; // Return empty for empty or invalid input
+    }
+    const height = grid.length;
+    // Ensure all rows have the same width, use the first row's width
+    const width = grid[0].length;
+    const newGrid = Array(width).fill(null).map(() => Array(height).fill(0)); // Initialize new grid with correct dimensions
+
+    for (let i = 0; i < height; i++) {
+        // Ensure row exists and has expected width before accessing
+        if (grid[i] && grid[i].length === width) {
+            for (let j = 0; j < width; j++) {
+                if (grid[i][j] !== undefined) { // Check if source cell value exists
+                     newGrid[j][i] = grid[i][j];
+                }
+                // else: keep the initialized 0 in newGrid
+            }
+        } else {
+             // Handle potentially jagged arrays if necessary, though ARC expects rectangular
+             // For now, we assume rectangular based on ARC format.
+             // If a row is missing or has wrong length, its corresponding column in the transpose might be incomplete/incorrect.
+             console.warn("Transpose encountered potentially non-rectangular grid or missing row at index:", i);
+        }
+    }
+    return newGrid;
+}
+
+// Function to reflect a 2D array (grid) vertically (left-right flip)
+function reflectGridVertical(grid) {
+    if (!grid || grid.length === 0) {
+        return [];
+    }
+    const newGrid = [];
+    for (let i = 0; i < grid.length; i++) {
+        if (Array.isArray(grid[i])) { // Check if row is an array
+            newGrid.push([...grid[i]].reverse()); // Create a copy before reversing
+        } else {
+            newGrid.push([]); // Add empty array if original row wasn't an array
+            console.warn("Vertical reflection encountered non-array row at index:", i);
+        }
+    }
+    return newGrid;
+}
+
+// Function to reflect a 2D array (grid) horizontally (top-bottom flip)
+function reflectGridHorizontal(grid) {
+    if (!grid || grid.length === 0) {
+        return [];
+    }
+    // Create a shallow copy of the outer array before reversing
+    // Filter out any non-array elements just in case, though ARC expects arrays of arrays
+    return [...grid].filter(row => Array.isArray(row)).reverse();
+}
+
+
 function errorMsg(msg) {
     $('#error_display').stop(true, true);
     $('#info_display').stop(true, true);
@@ -167,4 +224,26 @@ function infoMsg(msg) {
     $('#info_display').html(msg);
     $('#info_display').show();
     $('#info_display').fadeOut(5000);
+}
+
+// Cookie Functions
+function setCookie(name, value, days) {
+    var expires = "";
+    if (days) {
+        var date = new Date();
+        date.setTime(date.getTime() + (days * 24 * 60 * 60 * 1000));
+        expires = "; expires=" + date.toUTCString();
+    }
+    document.cookie = name + "=" + (value || "") + expires + "; path=/";
+}
+
+function getCookie(name) {
+    var nameEQ = name + "=";
+    var ca = document.cookie.split(';');
+    for(var i = 0; i < ca.length; i++) {
+        var c = ca[i];
+        while (c.charAt(0) == ' ') c = c.substring(1, c.length);
+        if (c.indexOf(nameEQ) == 0) return c.substring(nameEQ.length, c.length);
+    }
+    return null;
 }

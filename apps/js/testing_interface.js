@@ -1,14 +1,21 @@
 // Internal state.
-var CURRENT_INPUT_GRID = new Grid(3, 3);
-var CURRENT_OUTPUT_GRID = new Grid(3, 3);
-var TEST_PAIRS = new Array(); // Test pairs for the *currently loaded* task
-var CURRENT_TEST_PAIR_INDEX = 0;
+var CURRENT_INPUT_GRID = new Grid(3, 3); // Grid object for the current test input (displayed)
+var CURRENT_OUTPUT_GRID = new Grid(3, 3); // Grid object for the user's output editor
+var ORIGINAL_TASK_DATA = null; // Holds the raw task object {train: [...], test: [...], id: ...} as loaded
+var DISPLAYED_TASK_DATA = null; // Holds the potentially transformed task object
+var DISPLAYED_TRAIN_PAIRS = []; // Train pairs for the *currently displayed* (transformed) task
+var DISPLAYED_TEST_PAIRS = []; // Test pairs for the *currently displayed* (transformed) task
+var CURRENT_TEST_PAIR_INDEX = 0; // Index for DISPLAYED_TEST_PAIRS
 var COPY_PASTE_DATA = new Array();
-var LOADED_TASK_LIST = []; // Holds the list of tasks from the loaded dataset
-var CURRENT_TASK_INDEX = -1; // Index in LOADED_TASK_LIST
-var CURRENT_DATASET_NAME = null; // 'original' or 'augmented'
-var TASK_ID_MAP = {}; // Map task IDs to their index in LOADED_TASK_LIST
-var CURRENT_TRACE_INDEX = 0; // Index of the currently viewed trace for the active task
+var LOADED_TASK_LIST = []; // Holds the raw list of all entries from dataset.json
+var TASK_VERSIONS_MAP = {}; // Maps task_id -> array of task objects sorted by version {id: [task_v0, task_v1], ...}
+var UNIQUE_TASK_IDS = []; // Ordered list of unique task IDs found in the dataset
+var CURRENT_TASK_ID = null; // The ID of the task currently being viewed
+var CURRENT_VERSION_INDEX = -1; // The index within TASK_VERSIONS_MAP[CURRENT_TASK_ID] for the viewed version
+var CURRENT_DATASET_NAME = null; // Will likely just be 'dataset' now
+// var TASK_ID_MAP = {}; // Replaced by TASK_VERSIONS_MAP and UNIQUE_TASK_IDS
+// var CURRENT_TASK_INDEX = -1; // Replaced by CURRENT_TASK_ID and CURRENT_VERSION_INDEX
+var CURRENT_TRACE_INDEX = 0; // Index of the currently viewed trace for the active task ID
 var USERNAME = "Anonymous"; // Default username, will be updated from input
 var socket = null; // WebSocket connection object
 
@@ -18,37 +25,58 @@ var EDITION_GRID_WIDTH = 500;
 var MAX_CELL_SIZE = 100;
 
 
-function resetTask(isListNavigation = false) {
-    // Reset grids and current test pair index for the new task
+function resetTask(isDatasetLoad = false) { // Changed parameter name for clarity
+    // Reset grids and current test pair index
     CURRENT_INPUT_GRID = new Grid(3, 3);
-    TEST_PAIRS = new Array();
+    // TEST_PAIRS = new Array(); // Replaced by DISPLAYED_TEST_PAIRS
     CURRENT_TEST_PAIR_INDEX = 0;
     $('#task_preview').html(''); // Clear old demonstration pairs
     resetOutputGrid(); // Reset the output grid editor
 
-    // Only fully reset list/dataset state if not just navigating within the list
-    if (!isListNavigation) {
+    // Reset task data state
+    ORIGINAL_TASK_DATA = null;
+    DISPLAYED_TASK_DATA = null;
+    DISPLAYED_TRAIN_PAIRS = [];
+    DISPLAYED_TEST_PAIRS = [];
+
+    // Uncheck transformation checkboxes
+    $('#transformation_controls_area input[type=checkbox]').prop('checked', false);
+
+
+    // Reset version-specific UI
+    $('#version_navigation').hide();
+    $('#version_display').text('Ver -/-');
+    $('#prev_version_btn').prop('disabled', true);
+    $('#next_version_btn').prop('disabled', true);
+
+    // Only fully reset dataset state if loading a new dataset
+    if (isDatasetLoad) {
         LOADED_TASK_LIST = [];
-        CURRENT_TASK_INDEX = -1;
-        TASK_ID_MAP = {};
-        CURRENT_DATASET_NAME = null; // Clear dataset name unless reloading same one
-        $('#list_navigation').hide();
+        TASK_VERSIONS_MAP = {};
+        UNIQUE_TASK_IDS = [];
+        CURRENT_TASK_ID = null;
+        CURRENT_VERSION_INDEX = -1;
+        CURRENT_DATASET_NAME = null; // Clear dataset name
+        $('#list_navigation').hide(); // Task navigation
         $('#task_index_display').text('');
         $('#loaded_dataset_display').text('');
         $('#goto_id_controls').hide();
-        // Comment section visibility is handled by loadDataset/initial state now
-        // $('#comment_section').hide();
+        $('#comment_section').hide(); // Hide comments until a task is loaded
         CURRENT_TRACE_INDEX = 0; // Reset trace index
     }
 
     $('#error_display').hide();
     $('#info_display').hide();
-    // Also reset trace display area on task reset
+    // Also reset trace display area on task reset (even if not full dataset load)
     $('#comment_display_area').text('No reasoning traces added yet.');
     $('#comment_score_display').text('0');
     $('#comment_nav_display').text('Trace -/-');
     $('#prev_comment_btn').prop('disabled', true);
     $('#next_comment_btn').prop('disabled', true);
+    // Keep comment section hidden unless a task is successfully loaded later
+    if (!isDatasetLoad) {
+        $('#comment_section').hide();
+    }
     $('#upvote_btn').prop('disabled', true);
     $('#downvote_btn').prop('disabled', true);
 }
@@ -244,47 +272,280 @@ function loadSingleTask(taskObject, taskName) {
     $('#downvote_btn').prop('disabled', true);
 
     // Update distance display for the newly loaded task/test pair
-    updateDistanceDisplay();
+    // updateDistanceDisplay(); // Moved to applyAndDisplayTransformations
 }
 
 
-function display_task_name(taskIdentifier) {
-    let displayName = taskIdentifier || "Untitled Task";
+// --- Transformation Logic ---
 
-    let indexText = "";
-    if (CURRENT_TASK_INDEX !== -1 && LOADED_TASK_LIST.length > 0) {
-        indexText = ` (${CURRENT_TASK_INDEX + 1}/${LOADED_TASK_LIST.length})`;
+// Applies selected transformations to the ORIGINAL_TASK_DATA and updates the UI
+function applyAndDisplayTransformations() {
+    if (!ORIGINAL_TASK_DATA) {
+        console.log("applyAndDisplayTransformations called but no ORIGINAL_TASK_DATA exists.");
+        return; // No original data to transform
     }
 
-    // Display format: "Task name: [ID/Name] (Index/Total)"
-    $('#task_name').html(`Task name:&nbsp;&nbsp;&nbsp;&nbsp;${displayName}${indexText}`);
+    console.log("Applying transformations...");
+
+    // Create a deep copy to avoid modifying the original
+    let transformedData = JSON.parse(JSON.stringify(ORIGINAL_TASK_DATA));
+
+    // Get checkbox states
+    const doTranspose = $('#transform_transpose').is(':checked');
+    const doReflectV = $('#transform_reflect_v').is(':checked');
+    const doReflectH = $('#transform_reflect_h').is(':checked');
+    const doSwapTrain0Test0 = $('#transform_swap_train0_test0').is(':checked');
+    const doSwapTrain1Test0 = $('#transform_swap_train1_test0').is(':checked');
+
+    // Helper to apply grid transformations sequentially
+    function transformGrid(grid) {
+        let currentGrid = grid;
+        if (doTranspose) {
+            currentGrid = transposeGrid(currentGrid);
+        }
+        if (doReflectV) {
+            currentGrid = reflectGridVertical(currentGrid);
+        }
+        if (doReflectH) {
+            currentGrid = reflectGridHorizontal(currentGrid);
+        }
+        return currentGrid;
+    }
+
+    // Apply grid transformations to all inputs and outputs
+    transformedData.train.forEach(pair => {
+        if (pair.input) pair.input = transformGrid(pair.input);
+        if (pair.output) pair.output = transformGrid(pair.output);
+    });
+    transformedData.test.forEach(pair => {
+        if (pair.input) pair.input = transformGrid(pair.input);
+        if (pair.output) pair.output = transformGrid(pair.output);
+    });
+
+    // Apply swap transformations (careful with indices and potential double-swaps)
+    let test0_exists = transformedData.test.length > 0;
+    let train0_exists = transformedData.train.length > 0;
+    let train1_exists = transformedData.train.length > 1;
+
+    if (doSwapTrain0Test0 && train0_exists && test0_exists) {
+        console.log("Swapping train[0] and test[0]");
+        [transformedData.train[0], transformedData.test[0]] = [transformedData.test[0], transformedData.train[0]];
+        // After this swap, train[1] might now be at index 0 if test[0] was originally train[1] due to the *next* swap.
+        // Re-evaluate existence for the second swap based on the *current* state.
+        train1_exists = transformedData.train.length > 1; // Recheck train1 existence
+    }
+
+    if (doSwapTrain1Test0 && train1_exists && test0_exists) {
+        console.log("Swapping train[1] and test[0]");
+         // Ensure test[0] wasn't originally train[0] from the previous swap if both are checked
+        if (doSwapTrain0Test0 && transformedData.test[0] === ORIGINAL_TASK_DATA.train[0]) {
+             // If both swaps active, test[0] is now original train[0].
+             // We want to swap original train[1] with original train[0].
+             // Original train[1] is still at transformedData.train[1].
+             // Original train[0] is now at transformedData.test[0].
+             [transformedData.train[1], transformedData.test[0]] = [transformedData.test[0], transformedData.train[1]];
+        } else {
+            // Only swap train[1] <-> test[0] is active, or test[0] wasn't affected by first swap.
+            [transformedData.train[1], transformedData.test[0]] = [transformedData.test[0], transformedData.train[1]];
+        }
+    }
+
+
+    // Update displayed data state
+    DISPLAYED_TASK_DATA = transformedData;
+    DISPLAYED_TRAIN_PAIRS = DISPLAYED_TASK_DATA.train || [];
+    DISPLAYED_TEST_PAIRS = DISPLAYED_TASK_DATA.test || [];
+
+    // --- Update UI based on DISPLAYED data ---
+
+    // Update training pair previews
+    $('#task_preview').html(''); // Clear previous previews
+    for (let i = 0; i < DISPLAYED_TRAIN_PAIRS.length; i++) {
+        const pair = DISPLAYED_TRAIN_PAIRS[i];
+        // Ensure pair has input/output before trying to convert
+        if (pair && pair.input && pair.output) {
+            const input_grid = convertSerializedGridToGridObject(pair.input);
+            const output_grid = convertSerializedGridToGridObject(pair.output);
+            fillPairPreview(i, input_grid, output_grid);
+        } else {
+             console.warn(`Skipping display of train pair ${i} due to missing input/output after transformation.`);
+        }
+    }
+
+    // Update test input display (resetting index to 0)
+    CURRENT_TEST_PAIR_INDEX = 0; // Reset to first test pair after transform
+    if (DISPLAYED_TEST_PAIRS.length > 0 && DISPLAYED_TEST_PAIRS[0] && DISPLAYED_TEST_PAIRS[0]['input']) {
+        CURRENT_INPUT_GRID = convertSerializedGridToGridObject(DISPLAYED_TEST_PAIRS[0]['input']);
+        fillTestInput(CURRENT_INPUT_GRID);
+        $('#current_test_input_id_display').html('1');
+    } else {
+        // No test pairs or invalid first test pair after transform
+        $('#evaluation_input').html(''); // Clear input grid display
+        CURRENT_INPUT_GRID = new Grid(3, 3); // Reset grid
+        CURRENT_TEST_PAIR_INDEX = -1; // Indicate no valid test index
+        $('#current_test_input_id_display').html('0');
+    }
+    $('#total_test_input_count_display').html(DISPLAYED_TEST_PAIRS.length);
+
+    // Reset the output grid for the user
+    resetOutputGrid(); // Crucial to clear previous attempt
+
+    // Update distance display for the new state
+    updateDistanceDisplay();
+
+    console.log("Transformations applied and UI updated.");
 }
 
-function updateListNavigationUI() {
-    if (CURRENT_TASK_INDEX !== -1 && LOADED_TASK_LIST.length > 0) {
+
+// New function to load a specific task version by ID and version index
+function loadSingleTaskByIdAndVersion(taskId, versionIndex) {
+    if (!TASK_VERSIONS_MAP[taskId] || versionIndex < 0 || versionIndex >= TASK_VERSIONS_MAP[taskId].length) {
+        errorMsg(`Error: Task ID '${taskId}' version index ${versionIndex} not found.`);
+        return;
+    }
+
+    const taskObject = TASK_VERSIONS_MAP[taskId][versionIndex];
+    const taskVersion = taskObject.version !== undefined ? taskObject.version : 'N/A'; // Get version number
+
+    // Reset UI elements specific to a single task load (but not full dataset reset)
+    resetTask(false); // Pass false for isDatasetLoad
+
+    CURRENT_TASK_ID = taskId;
+    CURRENT_VERSION_INDEX = versionIndex;
+
+    try {
+        // Store the original data (deep copy)
+        ORIGINAL_TASK_DATA = JSON.parse(JSON.stringify(taskObject));
+
+        // Apply transformations (if any checked) and update the display
+        applyAndDisplayTransformations(); // This now handles loading train/test pairs into UI
+
+        // Update task name, task navigation, and version navigation displays
+        updateNavigationDisplays();
+
+        // Request traces from server for this task ID (consistent across versions)
+        if (socket && socket.connected && taskId) {
+            console.log(`Requesting traces for task ID: ${taskId}`);
+            socket.emit('request_traces', { task_id: taskId });
+            $('#comment_display_area').text('Loading traces...'); // Placeholder
+        } else if (!taskId) {
+            console.warn("Cannot request traces: Task ID is missing.");
+            displayTraces(); // Display local/empty traces
+        } else {
+            console.error("Cannot request traces: WebSocket not connected.");
+            errorMsg("Not connected to real-time server. Cannot load traces.");
+            displayTraces(); // Display local/empty traces
+        }
+
+        $('#comment_section').show(); // Show comment section for the loaded task
+        // updateDistanceDisplay(); // Called within applyAndDisplayTransformations
+
+        // --- Persist state on successful load ---
+        try {
+            sessionStorage.setItem('currentTaskId', CURRENT_TASK_ID);
+            sessionStorage.setItem('currentVersionIndex', CURRENT_VERSION_INDEX.toString()); // Store as string
+            sessionStorage.setItem('currentDatasetName', CURRENT_DATASET_NAME); // Store dataset name too
+            console.log(`Stored state: Task=${CURRENT_TASK_ID}, VersionIndex=${CURRENT_VERSION_INDEX}, Dataset=${CURRENT_DATASET_NAME}`);
+        } catch (storageError) {
+            console.error("Failed to save state to sessionStorage:", storageError);
+            // Non-critical error, maybe inform user? For now, just log.
+        }
+        // --- End Persist state ---
+
+    } catch (e) {
+        errorMsg(`Error processing task ${taskId} version ${taskVersion}: ${e.message}`);
+        // Optionally reset further UI elements if loading fails critically
+        ORIGINAL_TASK_DATA = null; // Clear original data on error too
+        DISPLAYED_TASK_DATA = null;
+        CURRENT_TASK_ID = null;
+        CURRENT_VERSION_INDEX = -1;
+        $('#comment_section').hide();
+        updateNavigationDisplays(); // Update displays to reflect failed load
+    }
+}
+
+
+// Updated function to handle task name, task index, and version display
+function updateNavigationDisplays() {
+    // Task Name and Version Display
+    let displayName = CURRENT_TASK_ID || "No Task Loaded";
+    let versionText = "";
+    let taskIndexText = "";
+
+    if (CURRENT_TASK_ID && TASK_VERSIONS_MAP[CURRENT_TASK_ID] && CURRENT_VERSION_INDEX !== -1) {
+        const currentVersionObject = TASK_VERSIONS_MAP[CURRENT_TASK_ID][CURRENT_VERSION_INDEX];
+        const versionNum = currentVersionObject.version !== undefined ? currentVersionObject.version : '?';
+        versionText = ` (Version ${versionNum})`;
+    }
+
+    // Task Index Display (based on unique IDs)
+    if (CURRENT_TASK_ID && UNIQUE_TASK_IDS.length > 0) {
+        const uniqueIndex = UNIQUE_TASK_IDS.indexOf(CURRENT_TASK_ID);
+        if (uniqueIndex !== -1) {
+            taskIndexText = ` (Task ${uniqueIndex + 1}/${UNIQUE_TASK_IDS.length})`;
+        }
+    }
+    $('#task_name').html(`Task name:&nbsp;&nbsp;&nbsp;&nbsp;${displayName}${versionText}${taskIndexText}`);
+
+    // Task List Navigation UI
+    if (UNIQUE_TASK_IDS.length > 0 && CURRENT_TASK_ID) {
+        const uniqueIndex = UNIQUE_TASK_IDS.indexOf(CURRENT_TASK_ID);
         $('#list_navigation').show();
-        $('#goto_id_controls').show(); // Show Go To ID when list is loaded
-        $('#task_index_display').text(`Task ${CURRENT_TASK_INDEX + 1}/${LOADED_TASK_LIST.length}`);
-        $('#prev_task_btn').prop('disabled', CURRENT_TASK_INDEX === 0);
-        $('#next_task_btn').prop('disabled', CURRENT_TASK_INDEX === LOADED_TASK_LIST.length - 1);
+        $('#goto_id_controls').show();
+        $('#goto_task_number_controls').show(); // Show task number controls too
+        $('#task_index_display').text(`Task ${uniqueIndex + 1}/${UNIQUE_TASK_IDS.length}`);
+        $('#prev_task_btn').prop('disabled', uniqueIndex === 0);
+        $('#next_task_btn').prop('disabled', uniqueIndex === UNIQUE_TASK_IDS.length - 1);
     } else {
         $('#list_navigation').hide();
-        $('#goto_id_controls').hide(); // Hide Go To ID if no list
+        $('#goto_id_controls').hide();
+        $('#goto_task_number_controls').hide(); // Hide task number controls too
+    }
+
+    // Version Navigation UI
+    if (CURRENT_TASK_ID && TASK_VERSIONS_MAP[CURRENT_TASK_ID]) {
+        const versions = TASK_VERSIONS_MAP[CURRENT_TASK_ID];
+        const totalVersions = versions.length;
+        // Always show the version navigation if a task with versions is loaded
+        $('#version_navigation').show();
+        $('#version_display').text(`Ver ${CURRENT_VERSION_INDEX + 1}/${totalVersions}`);
+        // Disable buttons appropriately based on index and total count
+        $('#prev_version_btn').prop('disabled', CURRENT_VERSION_INDEX === 0);
+        $('#next_version_btn').prop('disabled', CURRENT_VERSION_INDEX === totalVersions - 1);
+    } else {
+        // Hide if no task or versions map entry exists
+        $('#version_navigation').hide();
     }
 }
+
+
+// --- Trace Functions --- // (No changes needed here for versioning, relies on task_id)
+// ... displayTraces, previousTrace, nextTrace, upvoteTrace, downvoteTrace, voteOnTrace, addTrace ...
+
+// --- Download Data ---
 
 // --- Trace Functions --- // Renamed section
 
 function displayTraces() { // Renamed function
-    if (CURRENT_TASK_INDEX < 0 || !LOADED_TASK_LIST[CURRENT_TASK_INDEX]) {
-        $('#comment_section').hide(); // Hide if no task loaded
+    // Find the task object using the CURRENT_TASK_ID
+    const currentTask = LOADED_TASK_LIST.find(task => task.id === CURRENT_TASK_ID);
+
+    if (!currentTask) {
+        $('#comment_section').hide(); // Hide if no task loaded or found
+        // Clear previous trace display
+        $('#comment_display_area').text('No task loaded.');
+        $('#comment_score_display').text('0');
+        $('#comment_nav_display').text('Trace 0/0');
+        $('#prev_comment_btn').prop('disabled', true);
+        $('#next_comment_btn').prop('disabled', true);
+        $('#upvote_btn').prop('disabled', true);
+        $('#downvote_btn').prop('disabled', true);
         return;
     }
 
-    const currentTask = LOADED_TASK_LIST[CURRENT_TASK_INDEX];
-    // Ensure 'comments' array exists (it should have been initialized in loadDataset)
+    // Ensure 'comments' array exists (it should have been initialized in loadDataset or by socket)
     if (!currentTask.comments) {
-        currentTask.comments = [];
+        currentTask.comments = []; // Initialize if missing
     }
 
     // Sort traces by score descending (highest first)
@@ -338,7 +599,10 @@ function displayTraces() { // Renamed function
 }
 
 function previousTrace() { // Renamed function
-    if (CURRENT_TASK_INDEX < 0) return;
+    // Check if a task is loaded (implicitly checks CURRENT_TASK_ID)
+    const currentTask = LOADED_TASK_LIST.find(task => task.id === CURRENT_TASK_ID);
+    if (!currentTask) return;
+
     if (CURRENT_TRACE_INDEX > 0) {
         CURRENT_TRACE_INDEX--;
         displayTraces(); // Call renamed function
@@ -346,9 +610,11 @@ function previousTrace() { // Renamed function
 }
 
 function nextTrace() { // Renamed function
-    if (CURRENT_TASK_INDEX < 0) return;
-    const currentTask = LOADED_TASK_LIST[CURRENT_TASK_INDEX];
-    const totalTraces = currentTask.comments ? currentTask.comments.length : 0; // Still uses 'comments' array
+    // Check if a task is loaded
+    const currentTask = LOADED_TASK_LIST.find(task => task.id === CURRENT_TASK_ID);
+    if (!currentTask) return;
+
+    const totalTraces = currentTask.comments ? currentTask.comments.length : 0;
 
     if (CURRENT_TRACE_INDEX < totalTraces - 1) {
         CURRENT_TRACE_INDEX++;
@@ -365,12 +631,16 @@ function downvoteTrace() { // Renamed function
 }
 
 function voteOnTrace(voteChange) { // Renamed function
-     if (CURRENT_TASK_INDEX < 0 || !LOADED_TASK_LIST[CURRENT_TASK_INDEX]) return;
-    const currentTask = LOADED_TASK_LIST[CURRENT_TASK_INDEX];
-    if (!currentTask.comments || currentTask.comments.length === 0) return;
+    // Find the task object using the CURRENT_TASK_ID
+    const currentTask = LOADED_TASK_LIST.find(task => task.id === CURRENT_TASK_ID);
+    if (!currentTask || !currentTask.comments || currentTask.comments.length === 0) {
+        errorMsg("Cannot vote: No task or traces loaded.");
+        return;
+    }
 
     // Get the currently displayed trace based on the sorted order.
-    const sortedTraces = [...currentTask.comments].sort((a, b) => b.score - a.score);
+    // Ensure comments array exists before sorting
+    const sortedTraces = [...(currentTask.comments || [])].sort((a, b) => (b.score || 0) - (a.score || 0));
     if (CURRENT_TRACE_INDEX >= sortedTraces.length) return; // Index out of bounds
 
     const displayedTraceObject = sortedTraces[CURRENT_TRACE_INDEX];
@@ -403,24 +673,24 @@ function voteOnTrace(voteChange) { // Renamed function
 
 
 function addTrace() { // Renamed function
-    // Username is now validated before loading a dataset, so this check is redundant here.
-    // if (!USERNAME || USERNAME === "Anonymous") { ... }
+    // Username check is still relevant here before sending to server
+    if (!USERNAME || USERNAME === "Anonymous") {
+         errorMsg("Please enter a valid username before adding a trace.");
+         $('#username_input').focus();
+         return;
+     }
 
-    if (CURRENT_TASK_INDEX < 0 || !LOADED_TASK_LIST[CURRENT_TASK_INDEX]) {
+    // Find the task object using the CURRENT_TASK_ID
+    const currentTask = LOADED_TASK_LIST.find(task => task.id === CURRENT_TASK_ID);
+    if (!currentTask) {
         errorMsg("No task loaded to add a reasoning trace to.");
         return;
     }
-    const traceText = $('#new_comment_text').val().trim(); // Use the same textarea ID for now
+    const taskId = currentTask.id; // Get task ID from the found task object
+
+    const traceText = $('#new_comment_text').val().trim();
     if (!traceText) {
         errorMsg("Reasoning trace cannot be empty.");
-        return;
-    }
-
-    const currentTask = LOADED_TASK_LIST[CURRENT_TASK_INDEX];
-    const taskId = currentTask.id;
-
-    if (!taskId) {
-        errorMsg("Cannot add trace: Current task is missing an ID.");
         return;
     }
 
@@ -460,8 +730,8 @@ function downloadData() {
         const link = document.createElement('a');
         link.href = URL.createObjectURL(blob);
 
-        // Set the filename for the download
-        const filename = `${CURRENT_DATASET_NAME || 'dataset'}_with_traces.json`; // Update filename
+        // Set the filename for the download (using 'dataset' as it's now unified)
+        const filename = `dataset_with_traces.json`;
         link.download = filename;
 
         // Programmatically click the link to trigger the download
@@ -495,6 +765,9 @@ function loadDataset(datasetName) {
         return;
     } else {
         $('#username_error').hide(); // Hide error if username is provided
+        // Save username to cookie (e.g., for 30 days)
+        setCookie('username', USERNAME, 30);
+        console.log("Username saved to cookie:", USERNAME);
     }
     // --- End Username Check ---
 
@@ -507,161 +780,287 @@ function loadDataset(datasetName) {
     console.log(`Attempting to load dataset: ${datasetName} with username: ${USERNAME}`); // Add log
     resetTask(); // Full reset before loading new dataset
     CURRENT_DATASET_NAME = datasetName; // Set dataset name early for potential error messages
-    // Correct the path: Go up one level from 'apps' to the root, then into 'data'
-    // const filename = `../data/${datasetName}.json`; // Path for direct file access (CORS issue)
-    const serverRoute = `/data/${datasetName}.json`; // Path for Flask server route
+    // Use the unified dataset name 'dataset'
+    const filename = `dataset.json`;
+    const serverRoute = `/data/${filename}`; // Path for Flask server route
 
-    infoMsg(`Loading dataset '${datasetName}'...`); // Clear previous messages
-    errorMsg(''); // Clear previous error messages
-    $('#loaded_dataset_display').text(`Loading ${datasetName}...`);
-    console.log(`Fetching base data from ${serverRoute}...`); // Use server route
+    infoMsg(`Loading dataset '${filename}'...`);
+    errorMsg('');
+    $('#loaded_dataset_display').text(`Loading ${filename}...`);
+    console.log(`Fetching data from ${serverRoute}...`);
 
-    // Use Flask server route instead of direct file access
     $.ajax({
-        url: serverRoute, // Use the server route
+        url: serverRoute,
         dataType: 'json',
         success: function(data) {
-            console.log(`Successfully fetched base data for ${datasetName}. Processing...`);
+            console.log(`Successfully fetched data from ${filename}. Processing...`);
             if (!Array.isArray(data)) {
                 console.error(`Data from ${serverRoute} is not an array.`);
-                errorMsg(`Error: Base dataset file '${datasetName}' does not contain a valid JSON list.`);
-                resetTask();
+                errorMsg(`Error: Dataset file '${filename}' does not contain a valid JSON list.`);
+                resetTask(true); // Full reset
                 $('#loaded_dataset_display').text(`Failed: Invalid format`);
-                // Modal removed, don't show/hide workspace, stay on welcome screen
                 return;
             }
             if (data.length === 0) {
-                console.error(`Data from ${serverRoute} is an empty array.`);
-                errorMsg(`Error: Base dataset '${datasetName}' is empty.`);
-                resetTask();
-                $('#loaded_dataset_display').text(`Failed: Empty dataset`);
-                // Modal removed, don't show/hide workspace, stay on welcome screen
+                console.warn(`Data from ${serverRoute} is an empty array.`);
+                // Allow loading empty dataset, but show message
+                infoMsg(`Warning: Dataset '${filename}' is empty.`);
+                resetTask(true); // Full reset
+                LOADED_TASK_LIST = [];
+                TASK_VERSIONS_MAP = {};
+                UNIQUE_TASK_IDS = [];
+                CURRENT_DATASET_NAME = 'dataset'; // Still mark as loaded
+                $('#loaded_dataset_display').text(`Loaded: ${filename} (Empty)`);
+                // Hide welcome, show main (but nothing will load)
+                $('#welcome_screen').hide();
+                $('#demonstration_examples_view').show();
+                $('#evaluation_view').show();
+                updateNavigationDisplays(); // Update UI to show no tasks
                 return;
             }
 
-            console.log(`Base dataset ${datasetName} has ${data.length} tasks. Building ID map...`);
-            LOADED_TASK_LIST = data; // Store the base data
-            CURRENT_TASK_INDEX = 0; // Start at the first task
+            console.log(`Dataset ${filename} has ${data.length} entries. Building version map...`);
+            resetTask(true); // Full reset before populating
+            LOADED_TASK_LIST = data; // Store raw data
+            CURRENT_DATASET_NAME = 'dataset'; // Set dataset name
 
-            // Build the ID map and ensure 'comments' array exists (will be populated by WebSocket)
-            TASK_ID_MAP = {};
+            // Build the TASK_VERSIONS_MAP and UNIQUE_TASK_IDS
+            TASK_VERSIONS_MAP = {};
+            UNIQUE_TASK_IDS = [];
+            const idSet = new Set(); // To track unique IDs in order of appearance
+
             LOADED_TASK_LIST.forEach((task, index) => {
-                task.comments = []; // Initialize comments as empty, wait for server data
-                if (task.id) {
-                    TASK_ID_MAP[task.id] = index;
-                } else {
-                    console.warn(`Task at index ${index} in ${datasetName}.json is missing an 'id' field.`);
+                // Ensure required fields exist
+                if (!task || typeof task !== 'object') {
+                    console.warn(`Skipping invalid entry at index ${index} in ${filename}.`);
+                    return;
+                }
+                const taskId = task.id;
+                const taskVersion = task.version !== undefined ? parseInt(task.version, 10) : 0; // Default to 0, ensure int
+
+                if (!taskId) {
+                    console.warn(`Task entry at index ${index} in ${filename} is missing an 'id' field. Skipping.`);
+                    return;
+                }
+                 // Ensure version is a non-negative integer
+                if (isNaN(taskVersion) || taskVersion < 0) {
+                    console.warn(`Task entry '${taskId}' at index ${index} has invalid version '${task.version}'. Skipping.`);
+                    return;
+                }
+                task.version = taskVersion; // Store the parsed version back
+
+                // Initialize comments array (will be populated by WebSocket)
+                task.comments = [];
+
+                // Add to TASK_VERSIONS_MAP
+                if (!TASK_VERSIONS_MAP[taskId]) {
+                    TASK_VERSIONS_MAP[taskId] = [];
+                }
+                TASK_VERSIONS_MAP[taskId].push(task);
+
+                // Add to UNIQUE_TASK_IDS if new
+                if (!idSet.has(taskId)) {
+                    idSet.add(taskId);
+                    UNIQUE_TASK_IDS.push(taskId);
                 }
             });
-            console.log(`ID map built and comments array initialized for ${datasetName}. Loading first task...`);
 
-            // Load the first task's base data into the UI
+            // Sort versions within each task ID entry
+            for (const taskId in TASK_VERSIONS_MAP) {
+                TASK_VERSIONS_MAP[taskId].sort((a, b) => a.version - b.version);
+            }
+
+            console.log(`Version map built. Unique Task IDs: ${UNIQUE_TASK_IDS.length}. Loading first task...`);
+
             // --- Hide Welcome, Show Main Content ---
             $('#welcome_screen').hide();
             $('#demonstration_examples_view').show();
-            $('#evaluation_view').show(); // Show the parent container for evaluation sections
-            // Note: comment_section visibility is handled within loadSingleTask/displayTraces
-            // --- End Hide Welcome ---
+            $('#evaluation_view').show();
+            console.log(`Hid welcome screen and showed main content for ${filename}.`);
 
-            // Load the first task's base data into the UI
-            loadSingleTask(LOADED_TASK_LIST[0], LOADED_TASK_LIST[0].id || `${datasetName} Task 1`);
-            infoMsg(`Successfully loaded base data for ${LOADED_TASK_LIST.length} tasks from '${datasetName}' dataset.`);
-            $('#loaded_dataset_display').text(`Loaded: ${datasetName}`); // Update status on welcome screen (though it's now hidden)
-            console.log(`Hid welcome screen and showed main content for ${datasetName}.`);
+            // Load the first version of the first unique task ID
+            if (UNIQUE_TASK_IDS.length > 0) {
+                const firstTaskId = UNIQUE_TASK_IDS[0];
+                loadSingleTaskByIdAndVersion(firstTaskId, 0); // Load version 0 (index 0 after sort)
+                infoMsg(`Successfully loaded ${UNIQUE_TASK_IDS.length} unique tasks from '${filename}'.`);
+                $('#loaded_dataset_display').text(`Loaded: ${filename}`);
+            } else {
+                // Handle case where dataset had entries but none were valid tasks with IDs/versions
+                errorMsg(`Dataset '${filename}' loaded, but no valid tasks with IDs found.`);
+                $('#loaded_dataset_display').text(`Loaded: ${filename} (No valid tasks)`);
+                updateNavigationDisplays(); // Update UI to show no tasks
+            }
 
-            // WebSocket connection should already be established by $(document).ready
-            // loadSingleTask will emit 'request_traces'
+            // WebSocket connection should already be established
+            // loadSingleTaskByIdAndVersion will emit 'request_traces'
         },
         error: function(jqXHR, textStatus, errorThrown) {
-            console.error(`Failed to load base data ${serverRoute}. Status: ${textStatus}, Error: ${errorThrown}`, jqXHR);
-            errorMsg(`Failed to load base dataset '${datasetName}'. Check server logs. Status: ${textStatus}.`);
-            resetTask();
-            $('#loaded_dataset_display').text(`Failed to load ${datasetName}`);
-            // Don't hide workspace or show modal, stay on welcome screen on error
+            console.error(`Failed to load data ${serverRoute}. Status: ${textStatus}, Error: ${errorThrown}`, jqXHR);
+            errorMsg(`Failed to load dataset '${filename}'. Check server logs. Status: ${textStatus}.`);
+            resetTask(true); // Full reset
+            $('#loaded_dataset_display').text(`Failed to load ${filename}`);
+            // Stay on welcome screen on error
         }
     });
 }
 
 
+// Navigate through UNIQUE_TASK_IDS
 function randomTask() {
-    // Only pick from the currently loaded list
-    if (LOADED_TASK_LIST.length > 0) {
-        let randomIndex = Math.floor(Math.random() * LOADED_TASK_LIST.length);
-        // Avoid picking the same task consecutively if possible
-        if (LOADED_TASK_LIST.length > 1 && randomIndex === CURRENT_TASK_INDEX) {
-            randomIndex = (randomIndex + 1) % LOADED_TASK_LIST.length;
+    if (UNIQUE_TASK_IDS.length > 0) {
+        let currentUniqueIndex = UNIQUE_TASK_IDS.indexOf(CURRENT_TASK_ID);
+        let randomUniqueIndex = Math.floor(Math.random() * UNIQUE_TASK_IDS.length);
+        // Avoid picking the same task ID consecutively if possible
+        if (UNIQUE_TASK_IDS.length > 1 && randomUniqueIndex === currentUniqueIndex) {
+            randomUniqueIndex = (randomUniqueIndex + 1) % UNIQUE_TASK_IDS.length;
         }
-        CURRENT_TASK_INDEX = randomIndex;
-        // Use task ID if available, otherwise construct a name
-        let taskIdentifier = LOADED_TASK_LIST[CURRENT_TASK_INDEX]?.id || `${CURRENT_DATASET_NAME} Task ${CURRENT_TASK_INDEX + 1}`;
-        loadSingleTask(LOADED_TASK_LIST[CURRENT_TASK_INDEX], taskIdentifier);
-        infoMsg(`Loaded random task ${CURRENT_TASK_INDEX + 1}/${LOADED_TASK_LIST.length} from '${CURRENT_DATASET_NAME}' dataset.`);
+        const newTaskId = UNIQUE_TASK_IDS[randomUniqueIndex];
+        loadSingleTaskByIdAndVersion(newTaskId, 0); // Load first version of the new task ID
+        infoMsg(`Loaded random task ID: ${newTaskId} (Task ${randomUniqueIndex + 1}/${UNIQUE_TASK_IDS.length})`);
     } else {
-        // No dataset loaded, show error or prompt
-        errorMsg("Please load a dataset first before selecting a random task.");
+        errorMsg("Please load a dataset with valid tasks first.");
     }
 }
 
+// Navigate through UNIQUE_TASK_IDS
 function previousTask() {
-    if (CURRENT_TASK_INDEX > 0) {
-        CURRENT_TASK_INDEX--;
-        let taskIdentifier = LOADED_TASK_LIST[CURRENT_TASK_INDEX]?.id || `${CURRENT_DATASET_NAME} Task ${CURRENT_TASK_INDEX + 1}`;
-        loadSingleTask(LOADED_TASK_LIST[CURRENT_TASK_INDEX], taskIdentifier);
+    if (CURRENT_TASK_ID && UNIQUE_TASK_IDS.length > 0) {
+        const currentUniqueIndex = UNIQUE_TASK_IDS.indexOf(CURRENT_TASK_ID);
+        if (currentUniqueIndex > 0) {
+            const newTaskId = UNIQUE_TASK_IDS[currentUniqueIndex - 1];
+            loadSingleTaskByIdAndVersion(newTaskId, 0); // Load first version
+        }
     }
 }
 
+// Navigate through UNIQUE_TASK_IDS
 function nextTask() {
-    if (CURRENT_TASK_INDEX < LOADED_TASK_LIST.length - 1) {
-        CURRENT_TASK_INDEX++;
-        let taskIdentifier = LOADED_TASK_LIST[CURRENT_TASK_INDEX]?.id || `${CURRENT_DATASET_NAME} Task ${CURRENT_TASK_INDEX + 1}`;
-        loadSingleTask(LOADED_TASK_LIST[CURRENT_TASK_INDEX], taskIdentifier);
+     if (CURRENT_TASK_ID && UNIQUE_TASK_IDS.length > 0) {
+        const currentUniqueIndex = UNIQUE_TASK_IDS.indexOf(CURRENT_TASK_ID);
+        if (currentUniqueIndex < UNIQUE_TASK_IDS.length - 1) {
+            const newTaskId = UNIQUE_TASK_IDS[currentUniqueIndex + 1];
+            loadSingleTaskByIdAndVersion(newTaskId, 0); // Load first version
+        }
     }
 }
 
+// Navigate to a specific Task ID (loads first version)
 function gotoTaskById() {
-    const taskId = $('#task_id_input').val().trim();
-    if (!taskId) {
+    const taskIdToFind = $('#task_id_input').val().trim();
+    if (!taskIdToFind) {
         errorMsg("Please enter a Task ID.");
         return;
     }
 
-    if (TASK_ID_MAP.hasOwnProperty(taskId)) {
-        const targetIndex = TASK_ID_MAP[taskId];
-        if (targetIndex !== CURRENT_TASK_INDEX) {
-            CURRENT_TASK_INDEX = targetIndex;
-            let taskIdentifier = LOADED_TASK_LIST[CURRENT_TASK_INDEX]?.id; // Should always have ID here
-            loadSingleTask(LOADED_TASK_LIST[CURRENT_TASK_INDEX], taskIdentifier);
-            infoMsg(`Navigated to task ID: ${taskId}`);
+    if (TASK_VERSIONS_MAP.hasOwnProperty(taskIdToFind)) {
+        if (taskIdToFind !== CURRENT_TASK_ID) {
+            loadSingleTaskByIdAndVersion(taskIdToFind, 0); // Load first version
+            infoMsg(`Navigated to task ID: ${taskIdToFind}`);
             $('#task_id_input').val(''); // Clear input on success
         } else {
-            infoMsg(`Already viewing task ID: ${taskId}`);
+            infoMsg(`Already viewing task ID: ${taskIdToFind}. Use version buttons to navigate versions.`);
         }
     } else {
-        errorMsg(`Task ID '${taskId}' not found in the current '${CURRENT_DATASET_NAME}' dataset.`);
+        errorMsg(`Task ID '${taskIdToFind}' not found in the current dataset.`);
+    }
+}
+
+// Navigate to a specific Task by its 1-based index in the unique list
+function gotoTaskByNumber() {
+    const taskNumberInput = $('#task_number_input');
+    const taskNumberStr = taskNumberInput.val().trim();
+    if (!taskNumberStr) {
+        errorMsg("Please enter a Task Number.");
+        return;
+    }
+
+    const taskNumber = parseInt(taskNumberStr, 10);
+
+    if (isNaN(taskNumber)) {
+        errorMsg("Invalid Task Number entered.");
+        return;
+    }
+
+    if (!UNIQUE_TASK_IDS || UNIQUE_TASK_IDS.length === 0) {
+        errorMsg("No tasks loaded to navigate by number.");
+        return;
+    }
+
+    const totalTasks = UNIQUE_TASK_IDS.length;
+    if (taskNumber < 1 || taskNumber > totalTasks) {
+        errorMsg(`Task Number must be between 1 and ${totalTasks}.`);
+        return;
+    }
+
+    const taskIndex = taskNumber - 1; // Convert 1-based input to 0-based index
+    const taskIdToGo = UNIQUE_TASK_IDS[taskIndex];
+
+    if (taskIdToGo === CURRENT_TASK_ID) {
+        infoMsg(`Already viewing Task #${taskNumber} (ID: ${taskIdToGo}).`);
+    } else {
+        loadSingleTaskByIdAndVersion(taskIdToGo, 0); // Load first version
+        infoMsg(`Navigated to Task #${taskNumber} (ID: ${taskIdToGo})`);
+        taskNumberInput.val(''); // Clear input on success
     }
 }
 
 
+// --- New Version Navigation Functions ---
+
+function previousVersion() {
+    if (CURRENT_TASK_ID && CURRENT_VERSION_INDEX > 0) {
+        loadSingleTaskByIdAndVersion(CURRENT_TASK_ID, CURRENT_VERSION_INDEX - 1);
+    }
+}
+
+function nextVersion() {
+    if (CURRENT_TASK_ID && TASK_VERSIONS_MAP[CURRENT_TASK_ID]) {
+        const totalVersions = TASK_VERSIONS_MAP[CURRENT_TASK_ID].length;
+        if (CURRENT_VERSION_INDEX < totalVersions - 1) {
+            loadSingleTaskByIdAndVersion(CURRENT_TASK_ID, CURRENT_VERSION_INDEX + 1);
+        }
+    }
+}
+
+// --- End Version Navigation ---
+
+
 function nextTestInput() {
-    if (TEST_PAIRS.length <= CURRENT_TEST_PAIR_INDEX + 1) {
+    if (DISPLAYED_TEST_PAIRS.length <= CURRENT_TEST_PAIR_INDEX + 1) {
         errorMsg('No next test input.') // Removed suggestion to pick another file
         return
     }
     CURRENT_TEST_PAIR_INDEX += 1;
-    values = TEST_PAIRS[CURRENT_TEST_PAIR_INDEX]['input'];
-    CURRENT_INPUT_GRID = convertSerializedGridToGridObject(values)
-    fillTestInput(CURRENT_INPUT_GRID);
-    $('#current_test_input_id_display').html(CURRENT_TEST_PAIR_INDEX + 1);
-    $('#total_test_input_count_display').html(TEST_PAIRS.length);
-    updateDistanceDisplay(); // Update distance for the new test input
+    // Load input from the (potentially transformed) displayed test pairs
+    if (DISPLAYED_TEST_PAIRS[CURRENT_TEST_PAIR_INDEX] && DISPLAYED_TEST_PAIRS[CURRENT_TEST_PAIR_INDEX]['input']) {
+        values = DISPLAYED_TEST_PAIRS[CURRENT_TEST_PAIR_INDEX]['input'];
+        CURRENT_INPUT_GRID = convertSerializedGridToGridObject(values)
+        fillTestInput(CURRENT_INPUT_GRID);
+        $('#current_test_input_id_display').html(CURRENT_TEST_PAIR_INDEX + 1);
+        // Reset the output grid when moving to the next test input
+        resetOutputGrid();
+        updateDistanceDisplay(); // Update distance for the new test input
+    } else {
+        errorMsg(`Error loading next test input (index ${CURRENT_TEST_PAIR_INDEX}). Data might be corrupted.`);
+        // Attempt to recover or stay put? For now, just log error.
+        CURRENT_TEST_PAIR_INDEX -=1; // Revert index change
+    }
 }
 
 function submitSolution() {
+    // Ensure we have a valid test pair index and data
+    if (CURRENT_TEST_PAIR_INDEX < 0 || CURRENT_TEST_PAIR_INDEX >= DISPLAYED_TEST_PAIRS.length || !DISPLAYED_TEST_PAIRS[CURRENT_TEST_PAIR_INDEX] || !DISPLAYED_TEST_PAIRS[CURRENT_TEST_PAIR_INDEX]['output']) {
+        errorMsg('Cannot submit: No valid test solution data available.');
+        return;
+    }
+
     syncFromEditionGridToDataGrid();
-    reference_output = TEST_PAIRS[CURRENT_TEST_PAIR_INDEX]['output'];
+    // Compare against the output from the (potentially transformed) displayed test pair
+    reference_output = DISPLAYED_TEST_PAIRS[CURRENT_TEST_PAIR_INDEX]['output'];
     submitted_output = CURRENT_OUTPUT_GRID.grid;
+
     // Compare dimensions first
-    if (reference_output.length !== submitted_output.length || (reference_output.length > 0 && reference_output[0].length !== submitted_output[0].length)) {
+    if (!reference_output || !submitted_output || reference_output.length !== submitted_output.length || (reference_output.length > 0 && (!reference_output[0] || !submitted_output[0] || reference_output[0].length !== submitted_output[0].length))) {
          errorMsg('Wrong solution dimensions.');
          return;
     }
@@ -751,13 +1150,14 @@ function calculateHammingDistance(grid1, grid2) {
 
 function updateDistanceDisplay() {
     const distanceSpan = $('#distance_value_display');
-    // Check if we have valid test pairs and a valid index
-    if (!TEST_PAIRS || CURRENT_TEST_PAIR_INDEX < 0 || CURRENT_TEST_PAIR_INDEX >= TEST_PAIRS.length || !TEST_PAIRS[CURRENT_TEST_PAIR_INDEX]['output']) {
+    // Check if we have valid DISPLAYED test pairs and a valid index
+    if (!DISPLAYED_TEST_PAIRS || CURRENT_TEST_PAIR_INDEX < 0 || CURRENT_TEST_PAIR_INDEX >= DISPLAYED_TEST_PAIRS.length || !DISPLAYED_TEST_PAIRS[CURRENT_TEST_PAIR_INDEX] || !DISPLAYED_TEST_PAIRS[CURRENT_TEST_PAIR_INDEX]['output']) {
         distanceSpan.text('N/A'); // Not Applicable if no solution available
         return;
     }
 
-    const correctOutputGrid = TEST_PAIRS[CURRENT_TEST_PAIR_INDEX]['output'];
+    // Get the correct output from the (potentially transformed) displayed data
+    const correctOutputGrid = DISPLAYED_TEST_PAIRS[CURRENT_TEST_PAIR_INDEX]['output'];
     // Ensure CURRENT_OUTPUT_GRID reflects the latest state of the UI grid
     syncFromEditionGridToDataGrid();
     const userOutputGrid = CURRENT_OUTPUT_GRID.grid;
@@ -817,36 +1217,41 @@ function connectWebSocket() {
 
     socket.on('initial_traces', (data) => {
         console.log('Received initial_traces for task', data.task_id, ':', data.traces);
-        const currentTask = LOADED_TASK_LIST[CURRENT_TASK_INDEX];
-        // Ensure this message is for the currently viewed task
-        if (currentTask && currentTask.id === data.task_id) {
+        // Find the task by ID in the loaded list
+        const targetTask = LOADED_TASK_LIST.find(task => task.id === data.task_id);
+
+        if (targetTask) {
             // Replace local comments with server data
-            currentTask.comments = Array.isArray(data.traces) ? data.traces : [];
-            CURRENT_TRACE_INDEX = 0; // Reset view to the first trace
-            displayTraces(); // Update the display
+            targetTask.comments = Array.isArray(data.traces) ? data.traces : [];
+            console.log(`Updated traces for task ${data.task_id} locally.`);
+            // If this is the currently viewed task, reset index and refresh display
+            if (CURRENT_TASK_ID === data.task_id) {
+                CURRENT_TRACE_INDEX = 0; // Reset view to the first trace
+                displayTraces(); // Update the display
+            }
         } else {
-            console.log("Received initial_traces for a non-current task, ignoring for now.");
+            console.log("Received initial_traces for a task not found in LOADED_TASK_LIST, ignoring.");
         }
     });
 
     socket.on('new_trace', (newTrace) => {
         console.log('Received new_trace:', newTrace);
-        const currentTask = LOADED_TASK_LIST[CURRENT_TASK_INDEX];
         // Find the task in memory to add the trace to
         const targetTask = LOADED_TASK_LIST.find(task => task.id === newTrace.task_id);
         if (targetTask) {
              if (!targetTask.comments) targetTask.comments = [];
-             // Avoid adding duplicates
+             // Avoid adding duplicates based on trace_id
              if (!targetTask.comments.some(c => c.trace_id === newTrace.trace_id)) {
                  targetTask.comments.push(newTrace);
                  console.log(`Added new trace ${newTrace.trace_id} to task ${newTrace.task_id} locally.`);
                  // If it's for the currently viewed task, refresh display
-                 if (currentTask && currentTask.id === newTrace.task_id) {
-                     CURRENT_TRACE_INDEX = 0; // Go to first trace after adding
-                     displayTraces();
+                 if (CURRENT_TASK_ID === newTrace.task_id) {
+                     // Optionally decide whether to jump to the new trace or stay put
+                     // CURRENT_TRACE_INDEX = targetTask.comments.length - 1; // Jump to new trace
+                     displayTraces(); // Refresh display (will re-sort)
                  }
              } else {
-                 console.log(`Duplicate new_trace message received for ${newTrace.trace_id}, ignoring.`);
+                 console.log(`Duplicate new_trace message received (or trace already exists) for ${newTrace.trace_id}, ignoring.`);
              }
         } else {
             console.warn(`Received new_trace for unknown task_id ${newTrace.task_id}`);
@@ -855,7 +1260,6 @@ function connectWebSocket() {
 
     socket.on('trace_updated', (updatedInfo) => {
         console.log('Received trace_updated:', updatedInfo);
-        const currentTask = LOADED_TASK_LIST[CURRENT_TASK_INDEX];
         // Find the task and trace in memory and update score
         const targetTask = LOADED_TASK_LIST.find(task => task.id === updatedInfo.task_id);
         if (targetTask && targetTask.comments) {
@@ -865,11 +1269,11 @@ function connectWebSocket() {
                 // Optionally update voters if needed: targetTrace.voters = updatedInfo.voters;
                 console.log(`Updated score for trace ${updatedInfo.trace_id} to ${updatedInfo.score} locally.`);
                 // If it's for the currently viewed task, refresh display
-                if (currentTask && currentTask.id === updatedInfo.task_id) {
-                    displayTraces();
+                if (CURRENT_TASK_ID === updatedInfo.task_id) {
+                    displayTraces(); // Refresh display (will re-sort)
                 }
             } else {
-                 console.warn(`Received trace_updated for unknown trace_id ${updatedInfo.trace_id}`);
+                 console.warn(`Received trace_updated for unknown trace_id ${updatedInfo.trace_id} in task ${updatedInfo.task_id}`);
             }
         } else {
              console.warn(`Received trace_updated for unknown task_id ${updatedInfo.task_id}`);
@@ -884,10 +1288,76 @@ function connectWebSocket() {
         console.error('Server Trace Error:', error.message);
         errorMsg(`Server error: ${error.message}`);
     });
+
+    // Handler for server response after signing a variation
+    socket.on('variation_sign_result', (result) => {
+        console.log('Received variation_sign_result:', result);
+        if (result.success) {
+            infoMsg(`Variation signed successfully! (Task: ${result.task_id}, New Version: ${result.new_version}). Reloading dataset...`);
+            // Reload the dataset to get the new variation included
+            loadDataset('dataset'); // Assumes 'dataset' is the correct name
+        } else {
+            errorMsg(`Failed to sign variation: ${result.message}`);
+            // Re-enable the button only on failure, as success triggers a reload
+            $('#sign_variation_btn').prop('disabled', false);
+        }
+        // On success, the button remains disabled until the dataset reload completes
+        // and potentially re-enables it if the context is still valid.
+        // If loadDataset resets the button state, this might not be needed.
+    });
 }
 
 
 // --- End WebSocket ---
+
+// --- Sign Variation Logic ---
+
+function signVariation() {
+    console.log("Sign Variation button clicked.");
+
+    // 1. Check prerequisites
+    if (!ORIGINAL_TASK_DATA || !DISPLAYED_TASK_DATA) {
+        errorMsg("No task loaded to sign a variation for.");
+        return;
+    }
+    if (!USERNAME || USERNAME === "Anonymous") {
+        errorMsg("Please enter a valid username before signing.");
+        $('#username_input').focus();
+        return;
+    }
+    if (!socket || !socket.connected) {
+        errorMsg("Cannot sign variation: Not connected to real-time server.");
+        return;
+    }
+
+    // 2. Confirmation Dialog
+    const confirmationMessage = "Are you sure this transformed variation preserves the core logic of the original task and is a valid new task version?";
+    if (!confirm(confirmationMessage)) {
+        infoMsg("Variation signing cancelled.");
+        return;
+    }
+
+    // 3. Prepare Payload
+    const payload = {
+        original_task_id: ORIGINAL_TASK_DATA.id,
+        variation_data: { // Send only train and test arrays
+            train: DISPLAYED_TASK_DATA.train,
+            test: DISPLAYED_TASK_DATA.test
+        },
+        username: USERNAME
+    };
+
+    // 4. Emit WebSocket Event
+    console.log("Emitting sign_variation event with payload:", payload);
+    socket.emit('sign_variation', payload);
+
+    // 5. Provide Feedback & Disable Button Temporarily
+    infoMsg("Submitting variation signature...");
+    $('#sign_variation_btn').prop('disabled', true); // Prevent double-clicks
+    // The button will be re-enabled by the 'variation_sign_result' handler
+}
+
+// --- End Sign Variation Logic ---
 
 
 // Initial event binding.
@@ -904,6 +1374,15 @@ $(document).ready(function () {
 
     // Initialize WebSocket connection on page load
     connectWebSocket();
+
+    // --- Username Handling (including Cookie) ---
+    // Check for existing username cookie
+    const savedUsername = getCookie('username');
+    if (savedUsername) {
+        $('#username_input').val(savedUsername);
+        USERNAME = savedUsername; // Update global variable
+        console.log("Username loaded from cookie:", USERNAME);
+    }
 
     // Update username variable when input changes, hide error on input
     $('#username_input').on('input change', function() { // Trigger on input and change
@@ -958,9 +1437,16 @@ $(document).ready(function () {
         }
     });
 
+    // Add event listener for Enter key in the Go To Task Number input
+    $('#task_number_input').on('keydown', function(event) {
+        if (event.keyCode == 13) { // 13 is the Enter key
+            gotoTaskByNumber();
+        }
+    });
+
 
     $('body').keydown(function(event) {
-        // Ignore keydown events if focused in an input field (like Go To ID or username)
+        // Ignore keydown events if focused in an input field (like Go To ID, task number, or username)
         if ($(event.target).is('input, textarea')) {
             return;
         }
@@ -1032,5 +1518,11 @@ $(document).ready(function () {
                 errorMsg('Can only paste at a specific location; only select *one* cell as paste destination.');
             }
         }
+    });
+
+    // Add event listeners for transformation checkboxes
+    $('#transformation_controls_area input[type=checkbox]').change(function() {
+        // When any transformation checkbox changes, re-apply all transformations
+        applyAndDisplayTransformations();
     });
 });

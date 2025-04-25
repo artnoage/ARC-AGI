@@ -55,12 +55,21 @@ This format is analogous to visual IQ tests where one must identify a pattern fr
 
 ## Merging and Metadata (`auxilary_utilities/merge_json.py`)
 
-The script `auxilary_utilities/merge_json.py` is used to combine multiple individual task JSON files (like the ones in `data/evaluation/` or `data/training/`) into a single larger JSON file (e.g., `data/augmented.json` or `data/original.json`).
+The script `auxilary_utilities/merge_json.py` is used to combine multiple individual task JSON files (like the ones in `data/evaluation/` or `data/training/`) into a single unified JSON file (e.g., `data/dataset.json`).
 
-During this merging process, the script adds two metadata fields to each top-level task object *if they are not already present*:
+During this merging process, the script ensures each task entry has the following metadata fields:
 
-1.  **`id`**: A string representing the original filename of the task JSON (e.g., "009d5c81"). This serves as a unique identifier for the task.
-2.  **`created_by`**: A string indicating the creator or source, often set to "gkamradt".
+1.  **`id`**: A string representing a unique identifier for the task. If not present in the source file, it attempts to use the filename (without extension).
+2.  **`version`**: An integer representing the version of the task entry. If not present, it defaults to `0`. This allows multiple entries with the same `id` but different versions.
+3.  **`signed_by`**: A list of strings indicating the creator(s) or source(s) of this specific task version. If not present, it defaults to a list containing a default signer (e.g., `["gkamradt"]`). If the source file provides a string, it's converted into a single-element list.
+
+### Duplicate Handling
+
+The script handles entries with the same `id` and `version` intelligently:
+- It keeps track of entries based on their `(id, version)` tuple.
+- If an incoming entry has the same `id` and `version` as an already processed entry, it compares their `train` and `test` content.
+- **If the content is identical**: The script merges the `signed_by` lists, adding any unique signers from the incoming entry to the existing entry's list.
+- **If the content differs**: A warning is logged, and the script keeps the *first* entry it encountered for that specific `id` and `version`.
 
 Example structure after merging (conceptual, showing one task object within the merged list):
 
@@ -70,10 +79,18 @@ Example structure after merging (conceptual, showing one task object within the 
     "train": [ ... ],
     "test": [ ... ],
     "id": "009d5c81",
-    "created_by": "gkamradt"
+    "version": 0,
+    "signed_by": ["gkamradt", "another_user"] // Example with merged signers
+  },
+  {
+    "train": [ ... ], // Potentially different content
+    "test": [ ... ],
+    "id": "009d5c81",
+    "version": 1,
+    "signed_by": ["new_contributor"]
   },
   ... // Other task objects
 ]
 ```
 
-This metadata helps in tracking and managing the individual tasks within the larger merged dataset.
+This structure allows tracking different versions of tasks and attributing contributions via the `signed_by` list, while consolidating identical versions signed by different people.

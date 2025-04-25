@@ -16,9 +16,22 @@
       "task_id": "007bbfb7",
       "username": "bebo",
       "text": "who is your daddy",
-      "score": 0,
+      "score": -1,
       "timestamp": 1745506222.789474,
-      "voters": {}
+      "voters": {
+        "artnoage": -1
+      }
+    },
+    {
+      "trace_id": "007bbfb7_artnoage_neAg2g5v",
+      "task_id": "007bbfb7",
+      "username": "artnoage",
+      "text": "you are the only one",
+      "score": -1,
+      "timestamp": 1745518476.9881208,
+      "voters": {
+        "artnoage": -1
+      }
     }
   ],
   "00d62c1b": [
