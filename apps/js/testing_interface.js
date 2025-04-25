@@ -18,6 +18,9 @@ var CURRENT_DATASET_NAME = null; // Will likely just be 'dataset' now
 var CURRENT_TRACE_INDEX = 0; // Index of the currently viewed trace for the active task ID
 var USERNAME = "Anonymous"; // Default username, will be updated from input
 var socket = null; // WebSocket connection object
+var pendingTaskId = null; // For restoring state on refresh
+var pendingVersionIndex = null; // For restoring state on refresh
+var pendingDatasetName = null; // For restoring state on refresh
 
 // Cosmetic.
 var EDITION_GRID_HEIGHT = 500;
@@ -710,6 +713,59 @@ function addTrace() { // Renamed function
     // Don't add locally or refresh display, wait for broadcast
 }
 
+function removeCurrentTrace() {
+    // Username check
+    if (!USERNAME || USERNAME === "Anonymous") {
+        errorMsg("Please enter a valid username before removing a trace.");
+        $('#username_input').focus();
+        return;
+    }
+
+    // Find the task object using the CURRENT_TASK_ID
+    const currentTask = LOADED_TASK_LIST.find(task => task.id === CURRENT_TASK_ID);
+    if (!currentTask || !currentTask.comments || currentTask.comments.length === 0) {
+        errorMsg("No traces available to remove.");
+        return;
+    }
+
+    // Get the currently displayed trace based on the sorted order
+    const sortedTraces = [...(currentTask.comments || [])].sort((a, b) => (b.score || 0) - (a.score || 0));
+    if (CURRENT_TRACE_INDEX >= sortedTraces.length) {
+        errorMsg("No trace selected to remove.");
+        return;
+    }
+
+    const displayedTraceObject = sortedTraces[CURRENT_TRACE_INDEX];
+    
+    // Password prompt
+    const password = prompt("Enter password to remove this trace:", "");
+    if (password !== "remove") {
+        errorMsg("Incorrect password. Trace not removed.");
+        return;
+    }
+
+    // Find this trace in the original task.comments array using its unique ID
+    const originalTrace = currentTask.comments.find(c => c.trace_id === displayedTraceObject.trace_id);
+    if (!originalTrace) {
+        errorMsg("Error: Could not find the trace to remove.");
+        return;
+    }
+
+    // Emit remove_trace event to server
+    if (socket && socket.connected) {
+        console.log(`Emitting remove_trace: trace_id=${originalTrace.trace_id}, username=${USERNAME}`);
+        socket.emit('remove_trace', {
+            trace_id: originalTrace.trace_id,
+            task_id: currentTask.id,
+            username: USERNAME
+        });
+        infoMsg("Removing trace..."); // Give feedback
+        $('#remove_trace_btn').prop('disabled', true); // Prevent double-clicks
+    } else {
+        errorMsg("Cannot remove trace: Not connected to real-time server.");
+    }
+}
+
 function downloadData() {
     if (!LOADED_TASK_LIST || LOADED_TASK_LIST.length === 0) {
         errorMsg("No dataset loaded to download.");
@@ -870,7 +926,7 @@ function loadDataset(datasetName) {
                 TASK_VERSIONS_MAP[taskId].sort((a, b) => a.version - b.version);
             }
 
-            console.log(`Version map built. Unique Task IDs: ${UNIQUE_TASK_IDS.length}. Loading first task...`);
+            console.log(`Version map built. Unique Task IDs: ${UNIQUE_TASK_IDS.length}.`);
 
             // --- Hide Welcome, Show Main Content ---
             $('#welcome_screen').hide();
@@ -878,18 +934,53 @@ function loadDataset(datasetName) {
             $('#evaluation_view').show();
             console.log(`Hid welcome screen and showed main content for ${filename}.`);
 
-            // Load the first version of the first unique task ID
-            if (UNIQUE_TASK_IDS.length > 0) {
-                const firstTaskId = UNIQUE_TASK_IDS[0];
-                loadSingleTaskByIdAndVersion(firstTaskId, 0); // Load version 0 (index 0 after sort)
-                infoMsg(`Successfully loaded ${UNIQUE_TASK_IDS.length} unique tasks from '${filename}'.`);
-                $('#loaded_dataset_display').text(`Loaded: ${filename}`);
-            } else {
-                // Handle case where dataset had entries but none were valid tasks with IDs/versions
-                errorMsg(`Dataset '${filename}' loaded, but no valid tasks with IDs found.`);
-                $('#loaded_dataset_display').text(`Loaded: ${filename} (No valid tasks)`);
-                updateNavigationDisplays(); // Update UI to show no tasks
+            // --- Load Task (Check for Pending State First) ---
+            let taskLoaded = false;
+            if (pendingTaskId && pendingVersionIndex !== null && TASK_VERSIONS_MAP.hasOwnProperty(pendingTaskId) && pendingVersionIndex >= 0 && pendingVersionIndex < TASK_VERSIONS_MAP[pendingTaskId].length) {
+                console.log(`Attempting to load pending state: Task=${pendingTaskId}, VersionIndex=${pendingVersionIndex}`);
+                try {
+                    loadSingleTaskByIdAndVersion(pendingTaskId, pendingVersionIndex);
+                    infoMsg(`Restored session for task ID: ${pendingTaskId}`);
+                    $('#loaded_dataset_display').text(`Loaded: ${filename}`);
+                    taskLoaded = true;
+                } catch (loadError) {
+                    console.error("Error loading pending task state:", loadError);
+                    errorMsg(`Failed to restore previous task (${pendingTaskId}). Loading first task instead.`);
+                    // Clear bad pending state from session storage
+                    sessionStorage.removeItem('currentTaskId');
+                    sessionStorage.removeItem('currentVersionIndex');
+                    sessionStorage.removeItem('currentDatasetName');
+                }
+            } else if (pendingTaskId) {
+                console.warn(`Pending task ID ${pendingTaskId} or version ${pendingVersionIndex} not found in loaded dataset. Loading first task.`);
+                errorMsg(`Previous task (${pendingTaskId}) not found. Loading first task instead.`);
+                 // Clear bad pending state from session storage
+                 sessionStorage.removeItem('currentTaskId');
+                 sessionStorage.removeItem('currentVersionIndex');
+                 sessionStorage.removeItem('currentDatasetName');
             }
+
+            // Clear pending state variables regardless of success/failure
+            pendingTaskId = null;
+            pendingVersionIndex = null;
+            pendingDatasetName = null; // This was already set to CURRENT_DATASET_NAME
+
+            // If no task was loaded via pending state, load the default first task
+            if (!taskLoaded) {
+                if (UNIQUE_TASK_IDS.length > 0) {
+                    const firstTaskId = UNIQUE_TASK_IDS[0];
+                    console.log("Loading default first task:", firstTaskId);
+                    loadSingleTaskByIdAndVersion(firstTaskId, 0); // Load version 0 (index 0 after sort)
+                    infoMsg(`Successfully loaded ${UNIQUE_TASK_IDS.length} unique tasks from '${filename}'.`);
+                    $('#loaded_dataset_display').text(`Loaded: ${filename}`);
+                } else {
+                    // Handle case where dataset had entries but none were valid tasks with IDs/versions
+                    errorMsg(`Dataset '${filename}' loaded, but no valid tasks with IDs found.`);
+                    $('#loaded_dataset_display').text(`Loaded: ${filename} (No valid tasks)`);
+                    updateNavigationDisplays(); // Update UI to show no tasks
+                }
+            }
+            // --- End Load Task ---
 
             // WebSocket connection should already be established
             // loadSingleTaskByIdAndVersion will emit 'request_traces'
@@ -1283,27 +1374,147 @@ function connectWebSocket() {
         $('#downvote_btn').prop('disabled', false);
     });
 
-     socket.on('trace_error', (error) => {
+    socket.on('trace_removed', (removedInfo) => {
+        console.log('Received trace_removed:', removedInfo);
+        // Find the task in memory
+        const targetTask = LOADED_TASK_LIST.find(task => task.id === removedInfo.task_id);
+        if (targetTask && targetTask.comments) {
+            // Find and remove the trace from the task's comments array
+            const traceIndex = targetTask.comments.findIndex(c => c.trace_id === removedInfo.trace_id);
+            if (traceIndex !== -1) {
+                // Remove the trace
+                targetTask.comments.splice(traceIndex, 1);
+                console.log(`Removed trace ${removedInfo.trace_id} from task ${removedInfo.task_id} locally.`);
+                
+                // If it's for the currently viewed task, refresh display
+                if (CURRENT_TASK_ID === removedInfo.task_id) {
+                    // Reset trace index if needed
+                    if (CURRENT_TRACE_INDEX >= targetTask.comments.length) {
+                        CURRENT_TRACE_INDEX = Math.max(0, targetTask.comments.length - 1);
+                    }
+                    displayTraces(); // Refresh display
+                    infoMsg(removedInfo.message || "Trace removed.");
+                }
+            } else {
+                console.warn(`Received trace_removed for unknown trace_id ${removedInfo.trace_id} in task ${removedInfo.task_id}`);
+            }
+        } else {
+            console.warn(`Received trace_removed for unknown task_id ${removedInfo.task_id}`);
+        }
+    });
+
+    socket.on('trace_removal_result', (result) => {
+        console.log('Received trace_removal_result:', result);
+        // Re-enable the remove button
+        $('#remove_trace_btn').prop('disabled', false);
+        
+        if (result.success) {
+            infoMsg(result.message || "Trace successfully removed.");
+        } else {
+            errorMsg(result.message || "Failed to remove trace.");
+        }
+    });
+
+    socket.on('trace_error', (error) => {
         // Handle errors sent from the server related to traces/votes
         console.error('Server Trace Error:', error.message);
         errorMsg(`Server error: ${error.message}`);
+        
+        // Re-enable buttons that might have been disabled
+        $('#upvote_btn').prop('disabled', false);
+        $('#downvote_btn').prop('disabled', false);
+        $('#remove_trace_btn').prop('disabled', false);
     });
 
     // Handler for server response after signing a variation
     socket.on('variation_sign_result', (result) => {
         console.log('Received variation_sign_result:', result);
         if (result.success) {
-            infoMsg(`Variation signed successfully! (Task: ${result.task_id}, New Version: ${result.new_version}). Reloading dataset...`);
-            // Reload the dataset to get the new variation included
-            loadDataset('dataset'); // Assumes 'dataset' is the correct name
+            // This handler is used for both sign_variation and remove_variation responses
+            if (result.message.includes('removed')) {
+                infoMsg(`${result.message} Reloading dataset...`);
+            } else {
+                infoMsg(`Variation signed successfully! (Task: ${result.task_id}, New Version: ${result.new_version}). Reloading dataset...`);
+            }
+            
+            // Store current task ID to restore after reload
+            const currentTaskId = CURRENT_TASK_ID;
+            
+            // Fetch fresh dataset from server
+            $.ajax({
+                url: `/data/dataset.json`,
+                dataType: 'json',
+                cache: false, // Prevent caching to ensure we get fresh data
+                success: function(data) {
+                    console.log(`Successfully fetched fresh dataset data. Processing...`);
+                    
+                    // Update in-memory dataset
+                    LOADED_TASK_LIST = data;
+                    
+                    // Rebuild the version maps
+                    TASK_VERSIONS_MAP = {};
+                    UNIQUE_TASK_IDS = [];
+                    const idSet = new Set();
+                    
+                    LOADED_TASK_LIST.forEach((task) => {
+                        if (!task || typeof task !== 'object' || !task.id) return;
+                        
+                        const taskId = task.id;
+                        const taskVersion = task.version !== undefined ? parseInt(task.version, 10) : 0;
+                        
+                        // Initialize comments array
+                        task.comments = task.comments || [];
+                        
+                        // Add to TASK_VERSIONS_MAP
+                        if (!TASK_VERSIONS_MAP[taskId]) {
+                            TASK_VERSIONS_MAP[taskId] = [];
+                        }
+                        TASK_VERSIONS_MAP[taskId].push(task);
+                        
+                        // Add to UNIQUE_TASK_IDS if new
+                        if (!idSet.has(taskId)) {
+                            idSet.add(taskId);
+                            UNIQUE_TASK_IDS.push(taskId);
+                        }
+                    });
+                    
+                    // Sort versions within each task ID entry
+                    for (const taskId in TASK_VERSIONS_MAP) {
+                        TASK_VERSIONS_MAP[taskId].sort((a, b) => a.version - b.version);
+                    }
+                    
+                    // Try to load the same task if it still exists
+                    if (currentTaskId && TASK_VERSIONS_MAP[currentTaskId]) {
+                        // Load the first version if the current version was removed
+                        const versionIndex = 0;
+                        loadSingleTaskByIdAndVersion(currentTaskId, versionIndex);
+                        infoMsg(`Dataset reloaded and task ${currentTaskId} restored.`);
+                    } else {
+                        // If the task was completely removed, load the first task
+                        if (UNIQUE_TASK_IDS.length > 0) {
+                            const firstTaskId = UNIQUE_TASK_IDS[0];
+                            loadSingleTaskByIdAndVersion(firstTaskId, 0);
+                            infoMsg(`Dataset reloaded. Previous task no longer exists, loaded first task.`);
+                        } else {
+                            infoMsg(`Dataset reloaded, but no tasks found.`);
+                        }
+                    }
+                },
+                error: function(jqXHR, textStatus, errorThrown) {
+                    console.error(`Failed to reload dataset. Status: ${textStatus}, Error: ${errorThrown}`, jqXHR);
+                    errorMsg(`Failed to reload dataset after operation. Please refresh the page manually.`);
+                    
+                    // Re-enable buttons on error
+                    $('#sign_variation_btn').prop('disabled', false);
+                    $('#remove_version_btn').prop('disabled', false);
+                }
+            });
         } else {
-            errorMsg(`Failed to sign variation: ${result.message}`);
-            // Re-enable the button only on failure, as success triggers a reload
+            errorMsg(`Operation failed: ${result.message}`);
+            // Re-enable the buttons only on failure
             $('#sign_variation_btn').prop('disabled', false);
+            $('#remove_version_btn').prop('disabled', false);
         }
-        // On success, the button remains disabled until the dataset reload completes
-        // and potentially re-enables it if the context is still valid.
-        // If loadDataset resets the button state, this might not be needed.
     });
 }
 
@@ -1359,20 +1570,107 @@ function signVariation() {
 
 // --- End Sign Variation Logic ---
 
+// --- Remove Variation Logic ---
+
+function removeVersion() {
+    console.log("Remove Variation button clicked.");
+
+    // 1. Check prerequisites
+    if (!CURRENT_TASK_ID || CURRENT_VERSION_INDEX === -1) {
+        errorMsg("No task version loaded to remove.");
+        return;
+    }
+    if (!USERNAME || USERNAME === "Anonymous") {
+        errorMsg("Please enter a valid username before removing a version.");
+        $('#username_input').focus();
+        return;
+    }
+    if (!socket || !socket.connected) {
+        errorMsg("Cannot remove variation: Not connected to real-time server.");
+        return;
+    }
+
+    // 2. Check if this is version 0 (cannot remove base version)
+    if (CURRENT_VERSION_INDEX === 0) {
+        errorMsg("Cannot remove version 0 (base version).");
+        return;
+    }
+
+    // 3. Password prompt
+    const password = prompt("Enter password to remove this variation:", "");
+    if (password !== "remove") {
+        errorMsg("Incorrect password. Variation not removed.");
+        return;
+    }
+
+    // 4. Prepare Payload
+    const payload = {
+        task_id: CURRENT_TASK_ID,
+        version_index: CURRENT_VERSION_INDEX,
+        username: USERNAME
+    };
+
+    // 5. Emit WebSocket Event
+    console.log("Emitting remove_variation event with payload:", payload);
+    socket.emit('remove_variation', payload);
+
+    // 6. Provide Feedback & Disable Button Temporarily
+    infoMsg("Removing variation...");
+    $('#remove_version_btn').prop('disabled', true); // Prevent double-clicks
+    // The button will be re-enabled when the dataset is reloaded
+}
+
+// --- End Remove Variation Logic ---
+
+// --- Logout Function ---
+function logoutUser() {
+    console.log("Logging out user...");
+
+    // 1. Clear session storage
+    try {
+        sessionStorage.removeItem('currentTaskId');
+        sessionStorage.removeItem('currentVersionIndex');
+        sessionStorage.removeItem('currentDatasetName');
+        console.log("Session storage cleared.");
+    } catch (storageError) {
+        console.error("Failed to clear sessionStorage:", storageError);
+    }
+
+    // 2. Clear username cookie
+    setCookie('username', '', -1); // Set expiry date in the past
+    console.log("Username cookie cleared.");
+
+    // 3. Reset application state (full reset)
+    resetTask(true);
+
+    // 4. Clear username variable and input field
+    USERNAME = "Anonymous";
+    $('#username_input').val('');
+    console.log("Username variable and input field cleared.");
+
+    // 5. Hide main content, show welcome screen
+    $('#demonstration_examples_view').hide();
+    $('#evaluation_view').hide();
+    $('#comment_section').hide();
+    $('#welcome_screen').show();
+    console.log("UI reset to welcome screen.");
+
+    // 6. Optional: Disconnect WebSocket? Decide if needed.
+    // if (socket && socket.connected) {
+    //     socket.disconnect();
+    //     console.log("WebSocket disconnected on logout.");
+    // }
+
+    infoMsg("You have been logged out."); // Provide feedback
+}
+// --- End Logout Function ---
+
 
 // Initial event binding.
 
 $(document).ready(function () {
 
-    // --- Initial UI State ---
-    // Show only the welcome screen initially
-    $('#welcome_screen').show();
-    $('#demonstration_examples_view').hide();
-    $('#evaluation_view').hide();
-    $('#comment_section').hide(); // Ensure comment section is also hidden initially
-    // --- End Initial UI State ---
-
-    // Initialize WebSocket connection on page load
+    // Initialize WebSocket connection early
     connectWebSocket();
 
     // --- Username Handling (including Cookie) ---
@@ -1382,6 +1680,7 @@ $(document).ready(function () {
         $('#username_input').val(savedUsername);
         USERNAME = savedUsername; // Update global variable
         console.log("Username loaded from cookie:", USERNAME);
+        $('#username_error').hide(); // Hide error if loaded from cookie
     }
 
     // Update username variable when input changes, hide error on input
@@ -1393,6 +1692,60 @@ $(document).ready(function () {
         }
         console.log("Username set to:", USERNAME);
     });
+
+
+    // --- Attempt to Restore State from Session Storage ---
+    let restoredState = false;
+    try {
+        const savedTaskId = sessionStorage.getItem('currentTaskId');
+        const savedVersionIndexStr = sessionStorage.getItem('currentVersionIndex');
+        const savedDatasetName = sessionStorage.getItem('currentDatasetName');
+
+        if (savedTaskId && savedVersionIndexStr && savedDatasetName && USERNAME && USERNAME !== "Anonymous") {
+            const savedVersionIndex = parseInt(savedVersionIndexStr, 10);
+            if (!isNaN(savedVersionIndex)) {
+                console.log(`Found saved state: Task=${savedTaskId}, VersionIndex=${savedVersionIndex}, Dataset=${savedDatasetName}`);
+                // Store in pending variables for loadDataset to pick up
+                pendingTaskId = savedTaskId;
+                pendingVersionIndex = savedVersionIndex;
+                pendingDatasetName = savedDatasetName;
+
+                // Immediately attempt to load the dataset (which will then load the specific task)
+                // This implicitly hides the welcome screen if successful
+                loadDataset(pendingDatasetName);
+                restoredState = true; // Mark that we attempted restoration
+            } else {
+                console.warn("Invalid version index found in sessionStorage.");
+                sessionStorage.clear(); // Clear potentially corrupted state
+            }
+        } else {
+             console.log("No valid saved state found or username missing, showing welcome screen.");
+             // Clear any partial state just in case
+             sessionStorage.removeItem('currentTaskId');
+             sessionStorage.removeItem('currentVersionIndex');
+             sessionStorage.removeItem('currentDatasetName');
+        }
+    } catch (storageError) {
+        console.error("Failed to read state from sessionStorage:", storageError);
+        // Proceed as if no state was found
+    }
+    // --- End Attempt to Restore State ---
+
+
+    // --- Initial UI State (Conditional) ---
+    if (!restoredState) {
+        // If state wasn't restored (or failed), show the welcome screen
+        $('#welcome_screen').show();
+        $('#demonstration_examples_view').hide();
+        $('#evaluation_view').hide();
+        $('#comment_section').hide();
+        console.log("Showing welcome screen.");
+    } else {
+        // If restoration was attempted, loadDataset will handle showing/hiding
+        console.log("Attempted state restoration, UI visibility handled by loadDataset.");
+    }
+    // --- End Initial UI State ---
+
 
     // Set initial distance display visibility based on checkbox state
     toggleDistanceDisplay();

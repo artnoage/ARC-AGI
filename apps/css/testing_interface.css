@@ -94,6 +94,27 @@ body {
   background: #004c80; /* Even darker blue when active */
 }
 
+/* Logout Button Styles */
+#logout_btn {
+    color: white;
+    border-radius: 4px;
+    text-shadow: 0 1px 1px rgba(0, 0, 0, 0.4);
+    background: #dc3545; /* Red color */
+    border: none;
+    padding: 8px 15px; /* Match submit button size */
+    cursor: pointer;
+    margin-left: 10px; /* Add margin like other buttons */
+}
+
+#logout_btn:hover {
+    background: #c82333; /* Darker red on hover */
+}
+
+#logout_btn:active {
+  background: #bd2130; /* Even darker red when active */
+}
+
+
 button, input[type="button"] {
     background-color: #3c3c3c; /* Refined button background */
     color: #d4d4d4; /* Adjusted text color */
@@ -325,6 +346,25 @@ input:focus {
     font-size: 0.9em; /* Slightly smaller text */
 }
 
+/* Version Navigation Alignment */
+#version_navigation {
+    display: inline-flex; /* Use flexbox for alignment */
+    align-items: center; /* Vertically center items */
+    vertical-align: middle; /* Align the whole group with others */
+    margin-left: 15px; /* Keep existing margin */
+}
+
+#version_navigation button {
+    margin-left: 5px; /* Space between buttons and text */
+    margin-right: 5px;
+}
+
+#version_navigation span#version_display { /* More specific selector */
+    margin: 0 5px; /* Keep existing margin */
+    font-size: 0.9em; /* Slightly smaller text */
+}
+
+
 /* Comment Section Styles */
 #comment_section {
     /* clear: both; Removed as parent is flex */
@@ -348,9 +388,9 @@ input:focus {
 }
 
 #comment_display_area {
-    background-color: mintgreen; /* Changed background color */
+    background-color: #3c3c3c; /* Dark background for consistency */
     border: 1px solid #4a4a4a;
-    color: #1e1e1e; /* Adjusted text color for light background */
+    color: #d4d4d4; /* Light text for contrast */
     padding: 8px; /* Reduced padding */
     min-height: 30px; /* Reduced min-height */
     margin-bottom: 10px; /* Reduced margin */

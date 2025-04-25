@@ -66,49 +66,57 @@
                             <span id="task_index_display">Task 1/1</span>
                             <button onclick="nextTask()" id="next_task_btn">Next ></button>
                         </span>
-                        <!-- Version Navigation -->
-                        <span id="version_navigation" style="margin-left: 15px; display: none;"> <!-- Initially hidden -->
-                            <button onclick="previousVersion()" id="prev_version_btn" disabled>< Prev Ver</button>
-                            <span id="version_display" style="margin: 0 5px;">Ver -/-</span>
-                            <button onclick="nextVersion()" id="next_version_btn" disabled>Next Ver ></button>
-                        </span>
                         <!-- Go to ID Controls -->
                         <span id="goto_id_controls" style="margin-left: 15px;">
                             <label for="task_id_input">Go to ID:</label>
                             <input type="text" id="task_id_input" size="10" placeholder="Enter ID">
                             <button onclick="gotoTaskById()" id="goto_task_btn">Go</button>
-                        </span>
-                        <span id="goto_task_number_controls" style="margin-left: 15px;">
+                        </span><span id="goto_task_number_controls" style="margin-left: 15px;">
                             <label for="task_number_input">Go to Task #:</label>
                             <input type="number" id="task_number_input" size="5" min="1" placeholder="#">
                             <button onclick="gotoTaskByNumber()" id="goto_task_number_btn">Go</button>
                         </span>
-                        <p>
-                        <label id='task_name'> Task name: </label> <!-- Removed 'for' attribute -->
-                        <p>
-                        <label for="show_symbol_numbers">Show symbol numbers: </label>
-                        <input type="checkbox" id="show_symbol_numbers" name="show_symbol_numbers"
-                        onchange="changeSymbolVisibility()">
+                        <!-- Version Navigation -->
+                        <span id="version_navigation" style="margin-left: 15px; display: none;"> <!-- Initially hidden -->
+                            <button onclick="previousVersion()" id="prev_version_btn" disabled>< Prev Ver</button>
+                            <span id="version_display" style="margin: 0 5px;">Ver -/-</span>
+                            <button onclick="nextVersion()" id="next_version_btn" disabled>Next Ver ></button>
+                            <button onclick="removeVersion()" id="remove_version_btn" style="margin-left: 10px;">Remove Ver</button>
+                        </span>
+                        <!-- Logout Button Moved Below -->
+
+                        <div style="margin-top: 5px;"> <!-- Reduced spacing with div instead of p -->
+                            <label id='task_name'> Task name: </label> <!-- Removed 'for' attribute -->
+                        </div>
+                        <div style="margin-top: 5px;"> <!-- Reduced spacing with div instead of p -->
+                            <label for="show_symbol_numbers">Show symbol numbers: </label>
+                            <input type="checkbox" id="show_symbol_numbers" name="show_symbol_numbers"
+                            onchange="changeSymbolVisibility()">
+                        </div>
+
+                        <!-- Moved Grid Controls Here -->
+                        <div id="resize_control_btns" style="margin-top: 5px;"> <!-- Reduced margin-top -->
+                            <label for="output_grid_size">Change grid size: </label>
+                            <input type="text" id="output_grid_size" class="grid_size_field" name="size" value="3x3">
+                            <button onclick="resizeOutputGrid()" id="resize_btn">Resize</button>
+                        </div>
+
+                        <div id="distance_display_controls" style="margin-top: 5px; margin-bottom: 5px;">
+                            <input type="checkbox" id="show_distance_toggle" checked onchange="toggleDistanceDisplay()">
+                            <label for="show_distance_toggle" style="margin-right: 10px;">Show Distance:</label>
+                            <span id="distance_value_display" style="font-weight: bold;">N/A</span>
+                        </div>
+
+                        <button onclick="copyFromInput()">Copy from input</button>
+                        <button onclick="resetOutputGrid()">Reset grid</button>
+                        <button onclick="submitSolution()" id="submit_solution_btn">Submit!</button>
+                        <!-- Added Logout Button Next to Submit -->
+                        <button onclick="logoutUser()" id="logout_btn">Logout</button>
+                        <!-- End Moved Grid Controls -->
                     </div>
 
                     <!-- Removed <div id="edition_view"> -->
-                        <div id="editor_grid_control_btns">
-                            <div id="resize_control_btns">
-                                <label for="output_grid_size">Change grid size: </label>
-                                <input type="text" id="output_grid_size" class="grid_size_field" name="size" value="3x3">
-                                <button onclick="resizeOutputGrid()" id="resize_btn">Resize</button>
-                            </div>
-
-                            <div id="distance_display_controls" style="margin-top: 5px; margin-bottom: 5px;">
-                                <input type="checkbox" id="show_distance_toggle" checked onchange="toggleDistanceDisplay()">
-                                <label for="show_distance_toggle" style="margin-right: 10px;">Show Distance:</label>
-                                <span id="distance_value_display" style="font-weight: bold;">N/A</span>
-                            </div>
-
-                            <button onclick="copyFromInput()">Copy from input</button>
-                            <button onclick="resetOutputGrid()">Reset grid</button>
-                            <button onclick="submitSolution()" id="submit_solution_btn">Submit!</button>
-                        </div>
+                    <!-- Removed empty editor_grid_control_btns div -->
 
                         <div id="output_grid">
                             <div class="edition_grid selectable_grid">
@@ -186,6 +194,7 @@
                         <div id="add_comment_area">
                             <textarea id="new_comment_text" rows="2" style="width: 98%; padding: 5px; margin-bottom: 5px;" placeholder="Add your reasoning trace..."></textarea> <!-- Reduced rows to 2 -->
                             <button onclick="addTrace()">Add Reasoning Trace</button>
+                            <button onclick="removeCurrentTrace()" id="remove_trace_btn" style="margin-left: 10px;">Remove Trace</button>
                             <button onclick="downloadData()" id="download_data_btn" style="margin-left: 10px; float: right;">Download Data w/ Traces</button>
                         </div>
                     </div>

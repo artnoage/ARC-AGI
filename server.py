@@ -310,6 +310,152 @@ def handle_vote_trace(data):
     emit('trace_updated', updated_trace_info, broadcast=True)
     logging.info(f"Broadcasted updated score for trace {trace_id} (New score: {target_trace['score']})")
 
+@socketio.on('remove_trace')
+def handle_remove_trace(data):
+    """Client requests to remove a trace."""
+    trace_id = data.get('trace_id')
+    task_id = data.get('task_id')
+    username = data.get('username', 'Anonymous')
+    sid = request.sid
+
+    logging.info(f"Client {sid} ({username}) attempting to remove trace {trace_id} for task {task_id}")
+
+    if not trace_id or not task_id or not username:
+        logging.warning(f"Client {sid} sent incomplete 'remove_trace' data.")
+        emit('trace_error', {'message': 'Missing required data (trace ID, task ID, or username).'}, room=sid)
+        return
+
+    # Find the trace
+    if task_id not in trace_data:
+        logging.warning(f"Task ID {task_id} not found in trace data.")
+        emit('trace_error', {'message': f'Task ID {task_id} not found.'}, room=sid)
+        return
+
+    # Find the trace in the task's traces
+    trace_index = None
+    for i, trace in enumerate(trace_data[task_id]):
+        if trace.get('trace_id') == trace_id:
+            trace_index = i
+            break
+
+    if trace_index is None:
+        logging.warning(f"Trace ID {trace_id} not found in task {task_id}.")
+        emit('trace_error', {'message': f'Trace ID {trace_id} not found in task {task_id}.'}, room=sid)
+        return
+
+    # Remove the trace
+    removed_trace = trace_data[task_id].pop(trace_index)
+    logging.info(f"Removed trace {trace_id} from task {task_id}.")
+
+    # Save changes
+    save_trace_data()
+
+    # Broadcast the removal to all connected clients
+    emit('trace_removed', {
+        'trace_id': trace_id,
+        'task_id': task_id,
+        'message': f'Trace removed by {username}.'
+    }, broadcast=True)
+    
+    # Re-enable the remove button
+    emit('trace_removal_result', {
+        'success': True,
+        'message': f'Trace successfully removed.'
+    }, room=sid)
+    
+    logging.info(f"Broadcasted trace removal for trace {trace_id} of task {task_id}")
+
+@socketio.on('remove_variation')
+def handle_remove_variation(data):
+    """Client requests to remove a task variation."""
+    task_id = data.get('task_id')
+    version_index = data.get('version_index')
+    username = data.get('username')
+    sid = request.sid
+
+    logging.info(f"Client {sid} ({username}) attempting to remove variation for task {task_id}, version index {version_index}")
+
+    # --- Validation ---
+    if not all([task_id, username]) or version_index is None:
+        logging.warning(f"Client {sid} sent incomplete 'remove_variation' data.")
+        emit('variation_sign_result', {'success': False, 'message': 'Missing required data (task ID, version index, or username).'}, room=sid)
+        return
+
+    if unified_dataset_data is None:
+        logging.error("Cannot remove variation: Unified dataset is not loaded.")
+        emit('variation_sign_result', {'success': False, 'message': 'Server error: Dataset not loaded.'}, room=sid)
+        return
+
+    # Cannot remove version 0 (base version)
+    if version_index == 0:
+        logging.warning(f"Client {sid} attempted to remove base version (index 0) of task {task_id}.")
+        emit('variation_sign_result', {'success': False, 'message': 'Cannot remove base version (version 0).'}, room=sid)
+        return
+
+    # --- Processing ---
+    task_versions = []
+    task_indices = []
+    
+    # Find all versions of the task and their indices in the dataset
+    for i, entry in enumerate(unified_dataset_data):
+        if entry.get('id') == task_id:
+            task_versions.append(entry)
+            task_indices.append(i)
+    
+    if not task_versions:
+        logging.warning(f"Task {task_id} not found in dataset.")
+        emit('variation_sign_result', {'success': False, 'message': f'Task ID {task_id} not found in dataset.'}, room=sid)
+        return
+    
+    # Sort versions by version number
+    task_versions_with_indices = sorted(zip(task_versions, task_indices), key=lambda x: x[0].get('version', 0))
+    
+    # Check if version_index is valid
+    if version_index < 0 or version_index >= len(task_versions_with_indices):
+        logging.warning(f"Invalid version index {version_index} for task {task_id}.")
+        emit('variation_sign_result', {'success': False, 'message': f'Invalid version index {version_index} for task {task_id}.'}, room=sid)
+        return
+    
+    # Get the version to remove and its index in the dataset
+    version_to_remove, index_in_dataset = task_versions_with_indices[version_index]
+    version_number = version_to_remove.get('version', 0)
+    
+    # Remove the version
+    removed_version = unified_dataset_data.pop(index_in_dataset)
+    logging.info(f"Removed version {version_number} of task {task_id}.")
+    
+    # Realign version numbers for higher versions
+    versions_updated = 0
+    for entry in unified_dataset_data:
+        if entry.get('id') == task_id and entry.get('version', 0) > version_number:
+            entry['version'] = entry['version'] - 1
+            versions_updated += 1
+    
+    logging.info(f"Realigned {versions_updated} higher version numbers for task {task_id}.")
+    
+    # Save the updated dataset
+    if save_unified_dataset_data():
+        emit('variation_sign_result', {
+            'success': True, 
+            'message': f'Successfully removed version {version_number} of task {task_id} and realigned higher versions.', 
+            'task_id': task_id
+        }, room=sid)
+        logging.info(f"Dataset saved after removing version {version_number} of task {task_id}.")
+    else:
+        # If saving failed, add the removed version back to maintain consistency
+        unified_dataset_data.insert(index_in_dataset, removed_version)
+        # Restore version numbers
+        for entry in unified_dataset_data:
+            if entry.get('id') == task_id and entry.get('version', 0) >= version_number:
+                entry['version'] = entry['version'] + 1
+        
+        emit('variation_sign_result', {
+            'success': False, 
+            'message': 'Server error: Failed to save dataset after removing variation.', 
+            'task_id': task_id
+        }, room=sid)
+        logging.error(f"Failed to save dataset after removing version {version_number} of task {task_id}.")
+
 @socketio.on('sign_variation')
 def handle_sign_variation(data):
     """Client signs a transformed task variation."""

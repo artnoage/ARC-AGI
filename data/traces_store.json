@@ -32,19 +32,16 @@
       "voters": {
         "artnoage": -1
       }
+    },
+    {
+      "trace_id": "007bbfb7_artnoage_Jo1uqD5M",
+      "task_id": "007bbfb7",
+      "username": "artnoage",
+      "text": "the love of god",
+      "score": 0,
+      "timestamp": 1745576360.672449,
+      "voters": {}
     }
   ],
-  "00d62c1b": [
-    {
-      "trace_id": "00d62c1b_art_JYQby_VQ",
-      "task_id": "00d62c1b",
-      "username": "art",
-      "text": "who is this",
-      "score": 1,
-      "timestamp": 1745501739.1913006,
-      "voters": {
-        "art": 1
-      }
-    }
-  ]
+  "00d62c1b": []
 }
